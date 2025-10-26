@@ -1,69 +1,153 @@
-#include <stdlib.h>
+//#define UNICODE
+#define _UNICODE
+#include <windows.h>
+#include <commctrl.h>
+#include <richedit.h>
+#include <shlwapi.h>
+#include <tchar.h>
+#include <assert.h>
 #include <stdio.h>
-
-#include <gtk/gtk.h>
 
 #include "core.h"
 
-// Callback for the “Save Encrypted” button
-static void on_save_clicked(GtkButton *button, gpointer user_data) {
-    GtkTextBuffer *buffer = GTK_TEXT_BUFFER(user_data);
-    GtkTextIter start, end;
-    gchar *text;
+//#pragma comment(lib, "Comctl32.lib")
+//#pragma comment(lib, "Shlwapi.lib")
 
-    gtk_text_buffer_get_start_iter(buffer, &start);
-    gtk_text_buffer_get_end_iter(buffer, &end);
-    text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+// Window globals
+HWND hEdit;
+HWND hSaveButton;
+HFONT hFont;
 
-    EncryptAndSaveFile(".\\", "notes.enc", text);
+// Forward declarations
+LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+void LoadAndDecryptText(HWND hEdit);
+void SaveEncryptedText(HWND hEdit);
 
-    g_free(text);
+// Entry point
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
+{
+    // Load RichEdit for multiline text
+    LoadLibrary(TEXT("Msftedit.dll"));
+
+    const wchar_t CLASS_NAME[] = L"SecureNotesWindow";
+
+    WNDCLASS wc = {0};
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = CLASS_NAME;
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIcon(NULL, IDI_SHIELD);
+
+    RegisterClass(&wc);
+
+    HWND hwnd = CreateWindowEx(
+        0,
+        CLASS_NAME,
+        L"Secure Notes",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 700, 500,
+        NULL,
+        NULL,
+        hInstance,
+        NULL);
+
+    if (!hwnd)
+        return 0;
+
+    ShowWindow(hwnd, nCmdShow);
+    UpdateWindow(hwnd);
+
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    return (int)msg.wParam;
 }
 
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+    case WM_CREATE:
+    {
+        RECT rcClient;
+        GetClientRect(hwnd, &rcClient);
 
-void read_and_decrypt_file(GtkTextBuffer* buffer) {
-    
-    char* text = ReadFileAndDecrypt(".\\", "notes.enc");
-    if (text == NULL)
+        hEdit = CreateWindowEx(
+            WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, L"",
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
+                ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
+            10, 10, rcClient.right - 20, rcClient.bottom - 60,
+            hwnd, (HMENU)1001, ((LPCREATESTRUCT)lParam)->hInstance, NULL);
+
+        hSaveButton = CreateWindow(
+            L"BUTTON", L"Save Encrypted",
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            rcClient.right - 160, rcClient.bottom - 40, 140, 28,
+            hwnd, (HMENU)1002, ((LPCREATESTRUCT)lParam)->hInstance, NULL);
+
+        // Apply font
+        LOGFONT lf = {0};
+        lf.lfHeight = -16;
+        wcscpy_s(lf.lfFaceName, LF_FACESIZE, L"Segoe UI");
+        hFont = CreateFontIndirect(&lf);
+        SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+        SendMessage(hSaveButton, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        LoadAndDecryptText(hEdit);
+        return 0;
+    }
+
+    case WM_SIZE:
+    {
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        MoveWindow(hEdit, 10, 10, rc.right - 20, rc.bottom - 60, TRUE);
+        MoveWindow(hSaveButton, rc.right - 160, rc.bottom - 40, 140, 28, TRUE);
+        return 0;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wParam) == 1002)
+        {
+            SaveEncryptedText(hEdit);
+            MessageBox(hwnd, L"Encrypted note saved successfully.", L"Success", MB_ICONINFORMATION);
+            return 0;
+        }
+        break;
+
+    case WM_DESTROY:
+        DeleteObject(hFont);
+        PostQuitMessage(0);
+        return 0;
+    }
+
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+void LoadAndDecryptText(HWND hEdit)
+{
+    char *text = ReadFileAndDecrypt(".\\", "notes.enc");
+    if (!text)
         return;
-    gtk_text_buffer_set_text (buffer, text, strlen(text));
+
+    wchar_t wtext[65536];
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, 65536);
+    SetWindowTextW(hEdit, wtext);
     free(text);
 }
 
-// Called when the application window is created
-static void on_activate(GtkApplication *app, gpointer user_data) {
-    GtkWidget *window = gtk_application_window_new(app);
-    gtk_window_set_title(GTK_WINDOW(window), "Secure Notes (Prototype)");
-    gtk_window_set_default_size(GTK_WINDOW(window), 600, 400);
+void SaveEncryptedText(HWND hEdit)
+{
+    wchar_t wtext[65536];
+    GetWindowTextW(hEdit, wtext, 65536);
 
-    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_window_set_child(GTK_WINDOW(window), vbox);
+    char text[65536];
+    WideCharToMultiByte(CP_UTF8, 0, wtext, -1, text, 65536, NULL, NULL);
 
-    GtkWidget *textview = gtk_text_view_new();
-    gtk_widget_set_size_request(GTK_WIDGET(textview), 600, 300);
-    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textview));
-    gtk_box_append(GTK_BOX(vbox), textview);
-
-    GtkWidget *save_button = gtk_button_new_with_label("Save Encrypted");
-    g_signal_connect(save_button, "clicked", G_CALLBACK(on_save_clicked), buffer);
-    gtk_box_append(GTK_BOX(vbox), save_button);
-
-    // Show the window
-    gtk_window_present(GTK_WINDOW(window));
-    
-    read_and_decrypt_file(buffer);
-}
-
-
-
-int main(int argc, char *argv[]) {
-    GtkApplication *app;
-    int status;
-    
-    app = gtk_application_new("com.example.securenotes", G_APPLICATION_DEFAULT_FLAGS);
-    g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
-    status = g_application_run(G_APPLICATION(app), argc, argv);
-    g_object_unref(app);
-
-    return status;
+    EncryptAndSaveFile(".\\", "notes.enc", text);
 }
