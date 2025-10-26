@@ -111,7 +111,6 @@ char* ReadFileAndDecrypt(char* loadDirPath, char* fileName) {
         AES_init_ctx_iv(&encryption_ctx, key, iv);
         AES_CBC_decrypt_buffer(&encryption_ctx, data, encrypted_len);
         //string is prefixed with big endian 32 bit length
-        
         uint32_t read_len;
         memcpy(&read_len, data, sizeof(read_len));  // Safe: no unaligned access
         read_len = ntohl(read_len); 

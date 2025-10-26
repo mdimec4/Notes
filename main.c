@@ -51,7 +51,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     // Show the window
     gtk_window_present(GTK_WINDOW(window));
     
-    //read_and_decrypt_file(buffer);
+    read_and_decrypt_file(buffer);
 }
 
 
