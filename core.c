@@ -33,7 +33,7 @@ char* JonPath(char* saveDirPath, char* fileName) {
     strncpy(ret_buff, result, result_len);
 }
 
-char* EncryptString(char* text, size_t* encrypted_txt_cap_ret)
+static char* EncryptString(char* text, size_t* encrypted_txt_cap_ret)
 {
     size_t text_len = strlen(text);
     size_t text_with_prefix_len = sizeof(uint32_t) + text_len;
@@ -58,10 +58,40 @@ char* EncryptString(char* text, size_t* encrypted_txt_cap_ret)
      return data;
 }
 
+static char* DecryptString(char* data, size_t encrypted_len) {
+    assert(data != NULL);
+    
+    if(encrypted_len <= sizeof(uint32_t))
+    {
+        return NULL;
+    }
+    
+    AES_init_ctx_iv(&encryption_ctx, key, iv);
+    AES_CBC_decrypt_buffer(&encryption_ctx, data, encrypted_len);
+    //string is prefixed with big endian 32 bit length
+    uint32_t read_len;
+    memcpy(&read_len, data, sizeof(read_len));  // Safe: no unaligned access
+    read_len = ntohl(read_len); 
+    if (read_len + sizeof(uint32_t) > encrypted_len)
+    {
+        free(data);
+        return NULL;
+    }
+    data[sizeof(uint32_t) + read_len] = '\0';
+        
+    size_t text_size = read_len + 1;
+    char* text = calloc(text_size, 1);
+    strncpy(text, data + sizeof(uint32_t), read_len);
+    free(data);
+        
+    return text;
+}
+
 void EncryptAndSaveFile(char* saveDirPath, char* fileName, char* text) {
     
     assert(saveDirPath != NULL);
     assert(fileName != NULL);
+    assert(text != NULL);
     
     char* filePath = JonPath(saveDirPath, fileName);
     assert(filePath != NULL);
@@ -108,26 +138,9 @@ char* ReadFileAndDecrypt(char* loadDirPath, char* fileName) {
         size_t r1 = fread(data, 1, encrypted_len, f); 
         fclose(f);
 
-        AES_init_ctx_iv(&encryption_ctx, key, iv);
-        AES_CBC_decrypt_buffer(&encryption_ctx, data, encrypted_len);
-        //string is prefixed with big endian 32 bit length
-        uint32_t read_len;
-        memcpy(&read_len, data, sizeof(read_len));  // Safe: no unaligned access
-        read_len = ntohl(read_len); 
-        if (read_len + sizeof(uint32_t) > encrypted_len)
-        {
-            free(data);
-            return NULL;
-        }
-        data[sizeof(uint32_t) + read_len] = '\0';
-        
-        size_t text_size = read_len + 1;
-        char* text = calloc(text_size, 1);
-        strncpy(text, data + sizeof(uint32_t), read_len);
 
-        free(data);
         printf("Read text from notes.txt (unencrypted for now)\n");
-        return text;
+        return DecryptString(data, encrypted_len);
     } 
     
     fprintf(stderr, "Failed to read file!\n");

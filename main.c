@@ -27,7 +27,7 @@ void read_and_decrypt_file(GtkTextBuffer* buffer) {
     if (text == NULL)
         return;
     gtk_text_buffer_set_text (buffer, text, strlen(text));
-
+    free(text);
 }
 
 // Called when the application window is created
