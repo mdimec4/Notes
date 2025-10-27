@@ -4,19 +4,27 @@
 #include <stdint.h>
 #include <assert.h>
 
+#ifdef WIN32
 //#define _WINSOCKAPI_   // Prevent conflicts with sys/select.h
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <shlwapi.h>
+#include <wincrypt.h>
+
+#include <io.h>
+#define F_OK 0
+#define access _access
+#endif
+
 
 #include "aes.h"
 
-unsigned char key[AES_KEYLEN + 1] = "01234567890123456789012345678901"; // 32 bytes
-unsigned char iv[AES_BLOCKLEN +1] = "0123456789012345";                    // 16 bytes
+unsigned char key[AES_KEYLEN] = ""; // 32 bytes
+unsigned char iv[AES_BLOCKLEN] = "0123456789012345";                    // 16 bytes
 
 struct AES_ctx encryption_ctx;
 
-char* JonPath(char* saveDirPath, char* fileName) {
+static char* JonPath(const char* saveDirPath, const char* fileName) {
     char buffer_1[MAX_PATH] = "";
     
     assert(saveDirPath != NULL);
@@ -33,7 +41,7 @@ char* JonPath(char* saveDirPath, char* fileName) {
     strncpy(ret_buff, result, result_len);
 }
 
-static char* EncryptString(char* text, size_t* encrypted_txt_cap_ret)
+static char* EncryptString(const char* text, size_t* const encrypted_txt_cap_ret)
 {
     size_t text_len = strlen(text);
     size_t text_with_prefix_len = sizeof(uint32_t) + text_len;
@@ -58,7 +66,7 @@ static char* EncryptString(char* text, size_t* encrypted_txt_cap_ret)
      return data;
 }
 
-static char* DecryptString(char* data, size_t encrypted_len) {
+static char* DecryptString(char* data, const size_t encrypted_len) {
     assert(data != NULL);
     
     if(encrypted_len <= sizeof(uint32_t))
@@ -74,7 +82,6 @@ static char* DecryptString(char* data, size_t encrypted_len) {
     read_len = ntohl(read_len); 
     if (read_len + sizeof(uint32_t) > encrypted_len)
     {
-        free(data);
         return NULL;
     }
     data[sizeof(uint32_t) + read_len] = '\0';
@@ -82,12 +89,58 @@ static char* DecryptString(char* data, size_t encrypted_len) {
     size_t text_size = read_len + 1;
     char* text = calloc(text_size, 1);
     strncpy(text, data + sizeof(uint32_t), read_len);
-    free(data);
         
     return text;
 }
 
-void EncryptAndSaveFile(char* saveDirPath, char* fileName, char* text) {
+static char* ReadFileAll(const char* filePath, size_t* fileLen)
+{
+    FILE *f = fopen(filePath, "rb");
+    if (f == NULL)
+    {
+        return NULL;
+    }
+        
+    fseek(f, 0, SEEK_END);
+    size_t fLen = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    char* data = calloc(fileLen, 1);
+    if (data == NULL)
+    {
+        fclose(f);
+        return NULL;
+    }
+    
+    size_t r1 = fread(data, 1, fLen, f); // TODO Loop to ensure whole file read use feof and ferror to determine which one if returns 0
+    fclose(f);
+    
+    if (fileLen != NULL)
+        *fileLen = fLen;
+    
+    return data;
+}
+
+static int WriteFileAll(const char* filePath, char* data, size_t dataLen)
+{
+    assert(filePath != NULL);
+    assert(data != NULL);
+    
+    FILE *f = fopen(filePath, "wb");
+    if (f == NULL)
+    {
+        fprintf(stderr, "Failed to save file!\n");
+        return 1;
+    }
+    
+    fwrite(data, 1, encrypted_txt_cap, f); // TODO loop
+    fflush(f);
+    fclose(f);
+    
+    return 0;
+}
+
+int EncryptAndSaveFile(const char* saveDirPath, const char* fileName, const char* text) {
     
     assert(saveDirPath != NULL);
     assert(fileName != NULL);
@@ -96,25 +149,28 @@ void EncryptAndSaveFile(char* saveDirPath, char* fileName, char* text) {
     char* filePath = JonPath(saveDirPath, fileName);
     assert(filePath != NULL);
     
-    FILE *f = fopen(filePath, "wb");
-    free(filePath);
-
-    if (f) {
-        size_t encrypted_txt_cap = 0;
-        char* data = EncryptString(text, &encrypted_txt_cap);
-
-        fwrite(data, 1, encrypted_txt_cap, f);
-
-        free(data);
-        fflush(f);
-        fclose(f);
-        printf("Saved text to notes.txt (encrypted)\n");
-    } else {
+    size_t encrypted_txt_cap = 0;
+    char* data = EncryptString(text, &encrypted_txt_cap);
+    if (data == NULL)
+    {
         fprintf(stderr, "Failed to save file!\n");
+        free(filePath);
+        return 1;
     }
+    
+     if (WriteFileAll(filePath, data, size_t dataLen) != 0)
+     {
+         fprintf(stderr, "Failed to save file!\n");
+         free(filePath);
+         free(data);
+         return 1
+     }
+    free(filePath);
+    free(data);
+    printf("Saved text (encrypted)\n");
 }
 
-char* ReadFileAndDecrypt(char* loadDirPath, char* fileName) {
+char* ReadFileAndDecrypt(const char* loadDirPath, const char* fileName) {
     
     assert(loadDirPath != NULL);
     assert(fileName != NULL);
@@ -122,27 +178,137 @@ char* ReadFileAndDecrypt(char* loadDirPath, char* fileName) {
     char* filePath = JonPath(loadDirPath, fileName);
     assert(filePath != NULL);
     
-    FILE *f = fopen(filePath, "rb");
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        size_t encrypted_len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        
-        if(encrypted_len <= sizeof(uint32_t))
-        {
-            fclose(f);
-            return NULL;
-        }
-        char* data = calloc(encrypted_len + 1, 1);
-
-        size_t r1 = fread(data, 1, encrypted_len, f); 
-        fclose(f);
-
-
-        printf("Read text from notes.txt (unencrypted for now)\n");
-        return DecryptString(data, encrypted_len);
-    } 
+    //
+    size_t encrypted_len = 0;
+    char* data = ReadFileAll(filePath, &encrypted_len);
+    if (data == NULL)
+    {
+       fprintf(stderr, "Failed to read file!\n");
+       free(filePath);
+       return NULL;
+    }
     
-    fprintf(stderr, "Failed to read file!\n");
-    return NULL;
+    free(filePath);
+    
+    if(encrypted_len <= sizeof(uint32_t))
+    {
+        free(data);
+        return NULL;
+    }
+    
+    char* text = DecryptString(data, encrypted_len);
+    if (text == NULL)
+        return NULL;
+    free(data);
+    // '\0' terminate a string
+    text = realloc(text, encrypted_len + 1);
+    if (text == NULL)
+        return NULL;
+        text[encrypted_len] = '\0';
+    
+    printf("Read text (encrypted)\n");
+    
+    return text;
+}
+
+static int DeriveAESKeyFromPassword(const char *password, char aesKey[AES_KEYLEN])
+{
+    HCRYPTPROV hProv = 0;
+    HCRYPTHASH hHash = 0;
+    int ok = 0;
+
+    if (CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT))
+    {
+        if (CryptCreateHash(hProv, CALG_SHA_256, 0, 0, &hHash))
+        {
+            CryptHashData(hHash, (BYTE *)password, (DWORD)strlen(password), 0);
+            DWORD hashLen = AES_KEYLEN;
+            if (CryptGetHashParam(hHash, HP_HASHVAL, aesKey, &hashLen, 0))
+                ok = 1;
+            CryptDestroyHash(hHash);
+        }
+        CryptReleaseContext(hProv, 0);
+    }
+    return ok;
+}
+
+int IsPasswordIsSetSplitPath(const char* checkDirPath, const char* checkFileName)
+{
+    assert(checkDirPath != NULL);
+    assert(checkFileName != NULL);
+    
+    char* filePath = JonPath(checkDirPath, checkFileName);
+    
+    int ret = IsPasswordIsSet(filePath);
+    free(filePath);
+    return 0;
+}
+
+int IsPasswordIsSet(const char* checkFilePath)
+{
+    assert(checkFilePath != NULL);
+     
+    if (access(checkFilePath, F_OK) == 0)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath, const char* checkFileName)
+{
+    assert(password != NULL);
+    assert(checkDirPath != NULL);
+    assert(checkFileName != NULL);
+    
+    char* filePath = JonPath(checkDirPath, checkFileName);
+
+    int ok = DeriveAESKeyFromPassword(password, key);
+    if (!ok)
+    {
+         free(filePath);
+         return 0;
+    }   
+    char keyHash[AES_KEYLEN] = "";
+    ok = DeriveAESKeyFromPassword(key, keyHash);
+    if (!ok)
+    {
+        free(filePath);
+        return 0;
+    } 
+
+
+    if (IsPasswordIsSet(filePath))
+    {
+        size_t checkFileLen = 0;
+        char* checkFileContent = ReadFileAll(filePath, checkFileLen);
+        if (checkFileContent == NULL)
+        {
+            free(filePath);
+            return 0;
+            
+        }
+        free(filePath);
+        // TODO add salt to keyHashFile
+        if (checkFileLen != AES_KEYLEN)
+        {
+            return 0;
+            free(checkFileContent);
+        }
+        if (memcmp(keyHash, ) != 0)
+        {
+            free(checkFileContent);
+            return 0;
+        }
+        free(checkFileContent);
+        return 1;
+    }
+    
+    // TODO add salt to keyHashFile
+    if (WriteFileAll(const char* filePath, char* data, size_t dataLen) != 0)
+    {
+        free(filePath);
+        return 0;
+    }
+    free(filePath);
 }

@@ -1,5 +1,5 @@
 #ifndef CORE_H
 #define CORE_H
-void EncryptAndSaveFile(char* saveDirPath, char* fileName, char* text);
-char* ReadFileAndDecrypt(char* loadDirPath, char* fileName);
+int EncryptAndSaveFile(const char* saveDirPath, const char* fileName, const char* text);
+char* ReadFileAndDecrypt(const char* loadDirPath, const char* fileName);
 #endif
