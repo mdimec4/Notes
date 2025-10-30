@@ -257,9 +257,8 @@ char* ReadFileAndDecrypt(const char* loadDirPath, const char* fileName) {
 
 // Create a vault (verifier) file at checkFilePath using password.
 // Returns 0 on success, non-zero on error.
-static int CreateVerifierFile(const char* checkFilePath, const char* password) {
+static int CreateVerifierFileAndSetKey(const char* checkFilePath, const char* password) {
     if (!checkFilePath || !password) return 1;
-    if (sodium_init() < 0) return 1;
 
     unsigned char salt[SALT_LEN_DEFAULT];
     randombytes_buf(salt, SALT_LEN_DEFAULT);
@@ -300,6 +299,9 @@ static int CreateVerifierFile(const char* checkFilePath, const char* password) {
 
     int rc = WriteFileAll(checkFilePath, (char*)buf, pos);
 
+    // set key
+    memcpy(key, derived_key, AES_KEYLEN);
+    
     sodium_memzero(derived_key, AES_KEYLEN);
     sodium_memzero(verifier, VERIFIER_LEN);
     free(buf);
@@ -337,10 +339,9 @@ int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath,
 
     // First-run: create verifier if it does not exist
     if (access(filePath, F_OK) != 0) {
-        if (CreateVerifierFile(filePath, password) != 0) {
+        if (CreateVerifierFileAndSetKey(filePath, password) != 0) {
             free(filePath);
-            Logout();
-            return 0;
+            return 1;
         }
     }
 
