@@ -3,7 +3,6 @@
 #include <richedit.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sodium.h>
 #include "core.h"
 
 #ifdef _MSC_VER
@@ -29,8 +28,11 @@ void SaveEncryptedText(HWND hEdit);
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     LoadLibrary(TEXT("Msftedit.dll"));
-    Init(); // initialize libsodium
-
+    if (Init() != 0)
+    {
+        fprinf(stderr, "Failed to init app!");
+        return 1;
+    }
     const wchar_t CLASS_NAME[] = L"SecureNotesWindow";
 
     WNDCLASS wc = {0};
@@ -233,7 +235,7 @@ void LoadAndDecryptText(HWND hEdit)
     // Convert to wide string
     int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
     if (wlen <= 0) {
-        sodium_memzero(text, strlen(text));
+        secureZeroMemory(text, strlen(text));
         free(text);
         MessageBox(NULL, L"Failed to convert note to Unicode.", L"Error", MB_ICONERROR);
         return;
@@ -241,7 +243,7 @@ void LoadAndDecryptText(HWND hEdit)
 
     wchar_t* wtext = (wchar_t*)malloc(wlen * sizeof(wchar_t));
     if (!wtext) {
-        sodium_memzero(text, strlen(text));
+        ecureZeroMemory(text, strlen(text));
         free(text);
         return;
     }
@@ -251,7 +253,7 @@ void LoadAndDecryptText(HWND hEdit)
 
     // Securely wipe buffers
     SecureZeroMemory(wtext, wlen * sizeof(wchar_t));
-    sodium_memzero(text, strlen(text));
+    ecureZeroMemory(text, strlen(text));
 
     free(wtext);
     free(text);
