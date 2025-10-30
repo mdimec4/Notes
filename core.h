@@ -1,5 +1,19 @@
 #ifndef CORE_H
 #define CORE_H
+
+#include <stddef.h> // for size_t
+
+// AES file encryption/decryption
 int EncryptAndSaveFile(const char* saveDirPath, const char* fileName, const char* text);
 char* ReadFileAndDecrypt(const char* loadDirPath, const char* fileName);
-#endif
+
+// User password / verifier
+int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath, const char* checkFileName);
+int IsPasswordIsSetSplitPath(const char* checkDirPath, const char* checkFileName);
+int IsPasswordIsSet(const char* checkFilePath);
+
+// Initialization / cleanup
+int Init(void);
+void Logout(void);
+
+#endif // CORE_H

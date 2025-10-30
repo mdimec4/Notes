@@ -1,3 +1,11 @@
+CC = gcc
+CFLAGS = -Wall -O2 -municode -mwindows
+LIBS = -lws2_32 -lshlwapi -lcomctl32 -lgdi32 -ladvapi32 -lsodium
+TARGET = SecureNotes.exe
+SRC = main.c core.c aes.c
+
 all:
-	gcc main.c aes.c core.c -o secure_notes.exe \
-  -lws2_32 -lshlwapi -lcomctl32 -lgdi32 -ladvapi32 -municode -mwindows
+	$(CC) $(CFLAGS) $(SRC) -o $(TARGET) $(LIBS)
+
+clean:
+	rm -f $(TARGET)
