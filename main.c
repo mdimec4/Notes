@@ -3,6 +3,7 @@
 #include <richedit.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "core.h"
 
 #ifdef _MSC_VER
@@ -12,7 +13,7 @@
 #pragma comment(lib, "Advapi32.lib")
 #endif
 
-HWND hPasswordEdit, hUnlockButton;
+HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton;
 HWND hEdit, hSaveButton, hLogoutButton;
 HFONT hFont;
 BOOL isUnlocked = FALSE;
@@ -30,7 +31,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     LoadLibrary(TEXT("Msftedit.dll"));
     if (Init() != 0)
     {
-        fprinf(stderr, "Failed to init app!");
+        fprintf(stderr, "Failed to init app!");
         return 1;
     }
     const wchar_t CLASS_NAME[] = L"SecureNotesWindow";
@@ -95,6 +96,57 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
              // Clear the password field immediately after copying
              SetWindowTextW(hPasswordEdit, L"");
+             
+             if (hPasswordEdit2 != NULL)
+             {             
+                 if (strlen(password) < 21)
+                 {
+                     MessageBox(hwnd, L"Selected password is too short. Password must be at least 21 characters long!", L"Error", MB_ICONERROR);
+                     
+                     SetWindowTextW(hPasswordEdit2, L"");
+                     
+                     // Securely wipe password buffers
+                     SecureZeroMemory(pwbuf, len * sizeof(wchar_t));
+                     SecureZeroMemory(password, buflen);
+
+                     free(pwbuf);
+                     free(password);
+                     return 0;
+                }
+                int len2 = GetWindowTextLengthW(hPasswordEdit2) + 1;
+                wchar_t* pwbuf2 = (wchar_t*)malloc(len2 * sizeof(wchar_t));
+                GetWindowTextW(hPasswordEdit2, pwbuf2, len2);
+
+                int buflen2 = WideCharToMultiByte(CP_UTF8, 0, pwbuf2, -1, NULL, 0, NULL, NULL);
+                char* password2 = (char*)malloc(buflen2);
+                WideCharToMultiByte(CP_UTF8, 0, pwbuf2, -1, password2, buflen2, NULL, NULL);
+                
+                // Clear the password field immediately after copying
+                SetWindowTextW(hPasswordEdit2, L"");
+                
+                if (buflen != buflen2 || strncmp(password, password2, MIN(buflen, buflen2) != 0))
+                {
+                    MessageBox(hwnd, L"Passwords don't match!", L"Error", MB_ICONERROR);
+                    
+                    SecureZeroMemory(pwbuf, len * sizeof(wchar_t));
+                    SecureZeroMemory(password, buflen);
+                    SecureZeroMemory(pwbuf2, len2 * sizeof(wchar_t));
+                    SecureZeroMemory(password2, buflen2);
+
+                    free(pwbuf);
+                    free(password);
+                    free(pwbuf2);
+                    free(password2);
+                    return 0;
+                }
+                
+                // Securely wipe password buffers
+                SecureZeroMemory(pwbuf2, len * sizeof(wchar_t));
+                SecureZeroMemory(password2, buflen2);
+
+                free(pwbuf2);
+                free(password2);
+            }
 
              int success = CheckPasswordAndDeriveAesKey(password, ".\\", "verifier.dat");
 
@@ -145,8 +197,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else
         {
+            MoveWindow(hPasswordLabel, rc.right / 2 - 150, rc.bottom / 2 - 60, 300, 24, TRUE);
             MoveWindow(hPasswordEdit, rc.right / 2 - 150, rc.bottom / 2 - 20, 300, 24, TRUE);
-            MoveWindow(hUnlockButton, rc.right / 2 - 60, rc.bottom / 2 + 20, 120, 28, TRUE);
+            if (hPasswordEdit2 != NULL) MoveWindow(hPasswordEdit2, rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24, TRUE);
+            MoveWindow(hUnlockButton, rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28, TRUE);
         }
         return 0;
     }
@@ -164,26 +218,51 @@ void ShowLoginUI(HWND hwnd)
 {
     RECT rc;
     GetClientRect(hwnd, &rc);
+    
+    int isPasswordSet = IsPasswordIsSetSplitPath(".\\", "verifier.dat");
+    
+    hPasswordLabel = CreateWindow(L"static", L"ST_U",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        rc.right / 2 - 150, rc.bottom / 2 - 60, 300, 24,
+        hwnd, (HMENU)(501),
+        NULL, NULL);
+    SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"Enter new password:");
 
     hPasswordEdit = CreateWindowEx(
         WS_EX_CLIENTEDGE, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL,
         rc.right / 2 - 150, rc.bottom / 2 - 20, 300, 24,
         hwnd, (HMENU)1000, NULL, NULL);
+        
+
+    if (!isPasswordSet)
+    {
+        hPasswordEdit2 = CreateWindowEx(
+            WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL,
+            rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24,
+            hwnd, (HMENU)1000, NULL, NULL);
+    }
+    else
+        hPasswordEdit2 = NULL;
 
     hUnlockButton = CreateWindow(
         L"BUTTON", L"Unlock",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-        rc.right / 2 - 60, rc.bottom / 2 + 20, 120, 28,
+        rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28,
         hwnd, (HMENU)1001, NULL, NULL);
 
+    SendMessage(hPasswordLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hPasswordEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
+    if (hPasswordEdit2 != NULL) SendMessage(hPasswordEdit2, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hUnlockButton, WM_SETFONT, (WPARAM)hFont, TRUE);
 }
 
 void DestroyLoginUI(void)
 {
+    DestroyWindow(hPasswordLabel);
     DestroyWindow(hPasswordEdit);
+    if (hPasswordEdit2 != NULL) DestroyWindow(hPasswordEdit2);
     DestroyWindow(hUnlockButton);
 }
 
@@ -235,7 +314,7 @@ void LoadAndDecryptText(HWND hEdit)
     // Convert to wide string
     int wlen = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
     if (wlen <= 0) {
-        secureZeroMemory(text, strlen(text));
+        SecureZeroMemory(text, strlen(text));
         free(text);
         MessageBox(NULL, L"Failed to convert note to Unicode.", L"Error", MB_ICONERROR);
         return;
@@ -243,7 +322,7 @@ void LoadAndDecryptText(HWND hEdit)
 
     wchar_t* wtext = (wchar_t*)malloc(wlen * sizeof(wchar_t));
     if (!wtext) {
-        ecureZeroMemory(text, strlen(text));
+        SecureZeroMemory(text, strlen(text));
         free(text);
         return;
     }
@@ -253,7 +332,7 @@ void LoadAndDecryptText(HWND hEdit)
 
     // Securely wipe buffers
     SecureZeroMemory(wtext, wlen * sizeof(wchar_t));
-    ecureZeroMemory(text, strlen(text));
+    SecureZeroMemory(text, strlen(text));
 
     free(wtext);
     free(text);

@@ -3,6 +3,9 @@
 
 #include <stddef.h> // for size_t
 
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
+#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+
 // AES file encryption/decryption
 int EncryptAndSaveFile(const char* saveDirPath, const char* fileName, const char* text);
 char* ReadFileAndDecrypt(const char* loadDirPath, const char* fileName);
