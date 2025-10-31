@@ -124,7 +124,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 // Clear the password field immediately after copying
                 SetWindowTextW(hPasswordEdit2, L"");
                 
-                if (buflen != buflen2 || strncmp(password, password2, MIN(buflen, buflen2) != 0))
+                if (buflen != buflen2 || strncmp(password, password2, MIN(buflen, buflen2)) != 0)
                 {
                     MessageBox(hwnd, L"Passwords don't match!", L"Error", MB_ICONERROR);
                     
