@@ -184,7 +184,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         break;
-
+    case WM_CTLCOLORSTATIC:
+    {
+         HDC hdc = (HDC)wParam;
+         SetBkMode(hdc, TRANSPARENT);
+         return (INT_PTR)GetStockObject(NULL_BRUSH);
+    }
     case WM_SIZE:
     {
         RECT rc;
@@ -197,7 +202,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else
         {
-            MoveWindow(hPasswordLabel, rc.right / 2 - 150, rc.bottom / 2 - 60, 300, 24, TRUE);
+            MoveWindow(hPasswordLabel, rc.right / 2 - 150, rc.bottom / 2 - 60, hPasswordEdit2 == NULL ? 300 : 500, 24, TRUE);
             MoveWindow(hPasswordEdit, rc.right / 2 - 150, rc.bottom / 2 - 20, 300, 24, TRUE);
             if (hPasswordEdit2 != NULL) MoveWindow(hPasswordEdit2, rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24, TRUE);
             MoveWindow(hUnlockButton, rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28, TRUE);
@@ -223,10 +228,10 @@ void ShowLoginUI(HWND hwnd)
     
     hPasswordLabel = CreateWindow(L"static", L"ST_U",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        rc.right / 2 - 150, rc.bottom / 2 - 60, 300, 24,
+        rc.right / 2 - 150, rc.bottom / 2 - 60, isPasswordSet ? 300 : 500, 24,
         hwnd, (HMENU)(501),
         NULL, NULL);
-    SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"Enter new password:");
+    SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"New password: (Use letters, numbers and special characters)");
 
     hPasswordEdit = CreateWindowEx(
         WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -247,7 +252,7 @@ void ShowLoginUI(HWND hwnd)
         hPasswordEdit2 = NULL;
 
     hUnlockButton = CreateWindow(
-        L"BUTTON", L"Unlock",
+        L"BUTTON", isPasswordSet ? L"Unlock" : L"Set password",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
         rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28,
         hwnd, (HMENU)1001, NULL, NULL);
