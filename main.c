@@ -211,6 +211,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
 
     case WM_DESTROY:
+        Logout();
         DeleteObject(hFont);
         PostQuitMessage(0);
         return 0;
