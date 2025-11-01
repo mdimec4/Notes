@@ -133,126 +133,188 @@ static int IsKeyLoaded(void)
     return sodium_memcmp(key, zero_key, AES_KEYLEN) != 0;
 }
 
-int EncryptAndSaveFile(const char* saveDirPath, const char* fileName, const char* text) {
-    assert(saveDirPath && fileName && text);
-    
-    if (!IsKeyLoaded()) {
-        fprintf(stderr, "Error: no valid AES key loaded. Please log in first.\n");
-        return 0; // or NULL for the decrypt function
-    }
+// ------------------------------------------------------
+// 🔹 File I/O helpers
+// ------------------------------------------------------
 
-    char* filePath = JonPath(saveDirPath, fileName);
-    assert(filePath);
+static unsigned char* ReadFileToBuffer(const char* path, size_t* outSize) {
+    assert(path && outSize);
 
-    size_t text_len = strlen(text);
-    size_t total_len = sizeof(uint32_t) + text_len;
-    size_t padded_len = ((total_len + AES_BLOCKLEN - 1) / AES_BLOCKLEN) * AES_BLOCKLEN;
-
-    // Allocate buffers
-    unsigned char iv[AES_BLOCKLEN];
-    if (!GenerateRandomBytes(iv, AES_BLOCKLEN)) {
-        fprintf(stderr, "Failed to generate IV!\n");
-        free(filePath);
-        return 0;
-    }
-
-    unsigned char* buffer = calloc(padded_len, 1);
-    if (!buffer) {
-        free(filePath);
-        return 0;
-    }
-
-    // Prefix text length (big endian)
-    uint32_t be_len = htonl((uint32_t)text_len);
-    memcpy(buffer, &be_len, sizeof(be_len));
-    memcpy(buffer + sizeof(be_len), text, text_len);
-
-    // Encrypt using the file-specific IV
-    AES_init_ctx_iv(&encryption_ctx, key, iv);
-    AES_CBC_encrypt_buffer(&encryption_ctx, buffer, padded_len);
-
-    // Write IV + ciphertext to file
-    FILE* f = fopen(filePath, "wb");
-    if (!f) {
-        fprintf(stderr, "Failed to open file for writing\n");
-        free(filePath);
-        free(buffer);
-        return 0;
-    }
-
-    fwrite(iv, 1, AES_BLOCKLEN, f);
-    fwrite(buffer, 1, padded_len, f);
-    fclose(f);
-
-    printf("Saved encrypted file with IV.\n");
-
-    free(filePath);
-    free(buffer);
-    return 1;
-}
-
-char* ReadFileAndDecrypt(const char* loadDirPath, const char* fileName) {
-    assert(loadDirPath && fileName);
-    
-    if (!IsKeyLoaded()) {
-        fprintf(stderr, "Error: no valid AES key loaded. Please log in first.\n");
-        return 0; // or NULL for the decrypt function
-    }
-
-    char* filePath = JonPath(loadDirPath, fileName);
-    assert(filePath);
-
-    FILE* f = fopen(filePath, "rb");
-    if (!f) {
-        fprintf(stderr, "Failed to open file for reading\n");
-        free(filePath);
-        return NULL;
-    }
-
-    unsigned char iv[AES_BLOCKLEN];
-    if (fread(iv, 1, AES_BLOCKLEN, f) != AES_BLOCKLEN) {
-        fclose(f);
-        free(filePath);
-        fprintf(stderr, "Failed to read IV\n");
-        return NULL;
-    }
+    FILE* f = fopen(path, "rb");
+    if (!f) return NULL;
 
     fseek(f, 0, SEEK_END);
-    size_t total_len = ftell(f);
-    fseek(f, AES_BLOCKLEN, SEEK_SET);
-    size_t enc_len = total_len - AES_BLOCKLEN;
+    long len = ftell(f);
+    if (len < 0) { fclose(f); return NULL; }
+    rewind(f);
 
-    unsigned char* enc_data = calloc(enc_len, 1);
-    if (!enc_data) {
-        fclose(f);
-        free(filePath);
-        return NULL;
-    }
+    unsigned char* buf = malloc(len);
+    if (!buf) { fclose(f); return NULL; }
 
-    fread(enc_data, 1, enc_len, f);
+    size_t read = fread(buf, 1, len, f);
     fclose(f);
-    free(filePath);
 
-    // Decrypt
-    AES_init_ctx_iv(&encryption_ctx, key, iv);
-    AES_CBC_decrypt_buffer(&encryption_ctx, enc_data, enc_len);
-
-    // Extract plaintext
-    uint32_t be_len;
-    memcpy(&be_len, enc_data, sizeof(be_len));
-    uint32_t text_len = ntohl(be_len);
-
-    if (text_len > enc_len - sizeof(be_len)) {
-        free(enc_data);
-        fprintf(stderr, "Corrupted file (length mismatch)\n");
+    if (read != (size_t)len) {
+        free(buf);
         return NULL;
     }
 
-    char* out = calloc(text_len + 1, 1);
-    memcpy(out, enc_data + sizeof(be_len), text_len);
-    free(enc_data);
+    *outSize = (size_t)len;
+    return buf;
+}
 
-    return out;
+static int WriteBufferToFile(const char* path, const unsigned char* data, size_t size) {
+    assert(path && data);
+    FILE* f = fopen(path, "wb");
+    if (!f) return 0;
+
+    size_t written = fwrite(data, 1, size, f);
+    fclose(f);
+    return (written == size);
+}
+
+// ------------------------------------------------------
+// 🔹 Encryption / Decryption Helpers (IV embedded in buffer)
+// ------------------------------------------------------
+
+static unsigned char* EncryptBuffer(const unsigned char* plaintext, size_t plain_len, size_t* out_len) {
+    assert(plaintext && out_len);
+
+    if (!IsKeyLoaded()) {
+        fprintf(stderr, "Error: AES key not loaded.\n");
+        return NULL;
+    }
+
+    // Add 4-byte big-endian length before plaintext
+    size_t total_len = sizeof(uint32_t) + plain_len;
+    size_t padded_len = ((total_len + AES_BLOCKLEN - 1) / AES_BLOCKLEN) * AES_BLOCKLEN;
+
+    // Total buffer = IV (16 bytes) + ciphertext (padded_len)
+    size_t buf_len = AES_BLOCKLEN + padded_len;
+    unsigned char* buffer = calloc(buf_len, 1);
+    if (!buffer) return NULL;
+
+    unsigned char* iv = buffer;                  // IV is first 16 bytes
+    unsigned char* enc_data = buffer + AES_BLOCKLEN;
+
+    // Fill plaintext data with length prefix
+    uint32_t be_len = htonl((uint32_t)plain_len);
+    memcpy(enc_data, &be_len, sizeof(be_len));
+    memcpy(enc_data + sizeof(be_len), plaintext, plain_len);
+
+    // Generate file-specific IV
+    if (!GenerateRandomBytes(iv, AES_BLOCKLEN)) {
+        fprintf(stderr, "Failed to generate IV.\n");
+        free(buffer);
+        return NULL;
+    }
+
+    // Encrypt the payload (everything after IV)
+    AES_init_ctx_iv(&encryption_ctx, key, iv);
+    AES_CBC_encrypt_buffer(&encryption_ctx, enc_data, padded_len);
+
+    *out_len = buf_len;
+    return buffer; // caller frees
+}
+
+static unsigned char* DecryptBuffer(const unsigned char* in_buf, size_t in_len, size_t* out_len) {
+    assert(in_buf && out_len);
+
+    if (!IsKeyLoaded()) {
+        fprintf(stderr, "Error: AES key not loaded.\n");
+        return NULL;
+    }
+
+    if (in_len < AES_BLOCKLEN || ((in_len - AES_BLOCKLEN) % AES_BLOCKLEN) != 0) {
+        fprintf(stderr, "Invalid encrypted buffer size.\n");
+        return NULL;
+    }
+
+    const unsigned char* iv = in_buf;
+    const unsigned char* enc_data = in_buf + AES_BLOCKLEN;
+    size_t enc_len = in_len - AES_BLOCKLEN;
+
+    unsigned char* tmp = malloc(enc_len);
+    if (!tmp) return NULL;
+    memcpy(tmp, enc_data, enc_len);
+
+    AES_init_ctx_iv(&encryption_ctx, key, iv);
+    AES_CBC_decrypt_buffer(&encryption_ctx, tmp, enc_len);
+
+    // Read original plaintext length
+    uint32_t be_len;
+    memcpy(&be_len, tmp, sizeof(be_len));
+    uint32_t plain_len = ntohl(be_len);
+
+    if (plain_len > enc_len - sizeof(be_len)) {
+        fprintf(stderr, "Corrupted data (length mismatch)\n");
+        free(tmp);
+        return NULL;
+    }
+
+    unsigned char* plain = calloc(plain_len + 1, 1);
+    if (!plain) {
+        free(tmp);
+        return NULL;
+    }
+
+    memcpy(plain, tmp + sizeof(be_len), plain_len);
+    *out_len = plain_len;
+
+    free(tmp);
+    return plain; // caller frees
+}
+
+// ------------------------------------------------------
+// 🔹 High-level functions (file handling)
+// ------------------------------------------------------
+
+int EncryptAndSaveFile(const char* dir, const char* name, const char* text) {
+    assert(dir && name && text);
+
+    if (!IsKeyLoaded()) {
+        fprintf(stderr, "Error: AES key not loaded.\n");
+        return 0;
+    }
+
+    char* path = JonPath(dir, name);
+    if (!path) return 0;
+
+    size_t enc_len;
+    unsigned char* enc_buf = EncryptBuffer((const unsigned char*)text, strlen(text), &enc_len);
+    if (!enc_buf) {
+        free(path);
+        return 0;
+    }
+
+    int ok = WriteBufferToFile(path, enc_buf, enc_len);
+
+    free(enc_buf);
+    free(path);
+    return ok;
+}
+
+char* ReadFileAndDecrypt(const char* dir, const char* name) {
+    assert(dir && name);
+
+    if (!IsKeyLoaded()) {
+        fprintf(stderr, "Error: AES key not loaded.\n");
+        return NULL;
+    }
+
+    char* path = JonPath(dir, name);
+    if (!path) return NULL;
+
+    size_t file_len;
+    unsigned char* file_buf = ReadFileToBuffer(path, &file_len);
+    free(path);
+    if (!file_buf) return NULL;
+
+    size_t plain_len;
+    unsigned char* plain = DecryptBuffer(file_buf, file_len, &plain_len);
+
+    free(file_buf);
+    return (char*)plain; // caller frees
 }
 
 // Create a vault (verifier) file at checkFilePath using password.
