@@ -154,6 +154,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     return (int)msg.wParam;
 }
 
+static void WipeWindowText(HWND wnd)
+{
+    if (!wnd || !IsWindow(wnd)) 
+        return;
+        
+    int len = GetWindowTextLengthW(wnd);
+    if (len > 0) {
+        wchar_t* buf = (wchar_t*)malloc((len + 1) * sizeof(wchar_t));
+        if (buf) {
+            GetWindowTextW(wnd, buf, len + 1);
+            SecureZeroMemory(buf, (len + 1) * sizeof(wchar_t));
+            free(buf);
+        }
+    }
+    SetWindowTextW(wnd, L"");
+}
+
 INT_PTR CALLBACK NewNoteDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -209,7 +226,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             WideCharToMultiByte(CP_UTF8, 0, pwbuf, -1, password, buflen, NULL, NULL);
 
              // Clear the password field immediately after copying
-             SetWindowTextW(hPasswordEdit, L"");
+             WipeWindowText(hPasswordEdit);
              
              if (hPasswordEdit2 != NULL)
              {             
@@ -217,7 +234,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                  {
                      MessageBox(hwnd, L"Selected password is too short. Password must be at least 21 characters long!", L"Error", MB_ICONERROR);
                      
-                     SetWindowTextW(hPasswordEdit2, L"");
+                     WipeWindowText(hPasswordEdit2);
                      
                      // Securely wipe password buffers
                      SecureZeroMemory(pwbuf, len * sizeof(wchar_t));
@@ -236,7 +253,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 WideCharToMultiByte(CP_UTF8, 0, pwbuf2, -1, password2, buflen2, NULL, NULL);
                 
                 // Clear the password field immediately after copying
-                SetWindowTextW(hPasswordEdit2, L"");
+                WipeWindowText(hPasswordEdit2);
                 
                 if (buflen != buflen2 || strncmp(password, password2, MIN(buflen, buflen2)) != 0)
                 {
@@ -381,7 +398,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             free(n);
 
             gCurrentNote = NULL;
-            SetWindowTextW(hEdit, L"");
+            WipeWindowText(hEdit);
             EnableWindow(hEdit, FALSE);
             NotesList_SaveToDisk();
         }
@@ -432,6 +449,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             SaveEncryptedText(hEdit);
         NotesList_SaveToDisk();
         NotesList_FreeAll();
+        
+        DestroyEditorUI();
+        
         Logout();
         DeleteObject(hFont);
         PostQuitMessage(0);
@@ -561,16 +581,7 @@ void DestroyEditorUI(void)
 
     // Securely clear text before destroying the editor control
     if (hEdit && IsWindow(hEdit)) {
-        int len = GetWindowTextLengthW(hEdit);
-        if (len > 0) {
-            wchar_t* buf = (wchar_t*)malloc((len + 1) * sizeof(wchar_t));
-            if (buf) {
-                GetWindowTextW(hEdit, buf, len + 1);
-                SecureZeroMemory(buf, (len + 1) * sizeof(wchar_t));
-                free(buf);
-            }
-        }
-        SetWindowTextW(hEdit, L"");
+        WipeWindowText(hEdit);
         DestroyWindow(hEdit);
         hEdit = NULL;
     }
@@ -649,5 +660,3 @@ void SaveEncryptedText(HWND hEdit)
     free(text);
     free(wtext);
 }
-
-
