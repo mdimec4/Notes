@@ -16,13 +16,16 @@
 #include <arpa/inet.h> // for htonl/ntohl on non-windows (if ever)
 #endif
 
+#include <sys/stat.h>
 #include <sodium.h> // libsodium
+
 
 #include "aes.h"
 
 #ifndef MAX_PATH
 #define MAX_PATH 260
 #endif
+
 
 // Globals used by AES routines (from your original PoC)
 unsigned char key[AES_KEYLEN] = {0}; // AES_KEYLEN expected to be 32
@@ -76,6 +79,7 @@ static char* JonPath(const char* saveDirPath, const char* fileName) {
 // Utility: extract filename from full path (cross-platform).
 // Returns a newly allocated string containing just the file name,
 // or NULL on error.
+/*
 static char* GetFileName(const char* fullPath)
 {
     assert(fullPath != NULL);
@@ -104,6 +108,7 @@ static char* GetFileName(const char* fullPath)
     memcpy(fileName, fileNamePtr, len);
     return fileName;
 }
+*/
 
 // Read entire file into heap buffer. On success returns pointer (must free) and sets *fileLen.
 // On failure returns NULL and *fileLen is undefined.
@@ -277,7 +282,7 @@ static unsigned char* DecryptBuffer(const unsigned char* in_buf, size_t in_len, 
     uint32_t be_len;
     memcpy(&be_len, tmp, sizeof(be_len));
     uint32_t plain_len = ntohl(be_len);
-
+    
     if (plain_len > enc_len - sizeof(be_len)) {
         fprintf(stderr, "Corrupted data (length mismatch)\n");
         free(tmp);
@@ -300,31 +305,6 @@ static unsigned char* DecryptBuffer(const unsigned char* in_buf, size_t in_len, 
 // ------------------------------------------------------
 // 🔹 High-level functions (file handling)
 // ------------------------------------------------------
-
-int EncryptAndSaveFile(const char* dir, const char* name, const char* text) {
-    assert(dir && name && text);
-
-    if (!IsKeyLoaded()) {
-        fprintf(stderr, "Error: AES key not loaded.\n");
-        return 0;
-    }
-
-    char* path = JonPath(dir, name);
-    if (!path) return 0;
-
-    size_t enc_len;
-    unsigned char* enc_buf = EncryptBuffer((const unsigned char*)text, strlen(text), &enc_len);
-    if (!enc_buf) {
-        free(path);
-        return 0;
-    }
-
-    int ok = WriteBufferToFile(path, enc_buf, enc_len);
-
-    free(enc_buf);
-    free(path);
-    return ok;
-}
 
 char* ReadFileAndDecrypt(const char* dir, const char* name) {
     assert(dir && name);
@@ -352,6 +332,60 @@ char* ReadFileAndDecrypt(const char* dir, const char* name) {
 
     free(file_buf);
     return (char*)plain; // caller frees
+}
+
+int EncryptAndSaveFile(const char* dir, const char* name, const char* text)
+{
+    assert(dir && name && text);
+
+    if (!IsKeyLoaded()) {
+        fprintf(stderr, "Error: AES key not loaded.\n");
+        return 0;
+    }
+
+    char* path = JonPath(dir, name);
+    if (!path)
+        return 0;
+
+    // --- 1. Check if an identical note already exists ---
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_size > 0)
+    {
+        // Try to decrypt existing file
+        unsigned char* oldPlain = (unsigned char*)ReadFileAndDecrypt(dir, name);
+        if (oldPlain)
+        {
+            // Compare decrypted contents to new plaintext
+            if (strcmp((const char*)oldPlain, text) == 0)
+            {
+                sodium_memzero(oldPlain, strlen((char*)oldPlain));
+                free(oldPlain);
+                free(path);
+                return 1; // identical — skip re-encryption
+            }
+            sodium_memzero(oldPlain, strlen((char*)oldPlain));
+            free(oldPlain);
+        }
+    }
+
+    // --- 2. Encrypt new text ---
+    size_t enc_len = 0;
+    unsigned char* enc_buf = EncryptBuffer((const unsigned char*)text, strlen(text), &enc_len);
+    if (!enc_buf)
+    {
+        free(path);
+        return 0;
+    }
+
+    // --- 3. Write encrypted data to disk ---
+    int ok = WriteBufferToFile(path, enc_buf, enc_len);
+
+    // --- 4. Secure cleanup ---
+    sodium_memzero(enc_buf, enc_len);
+    free(enc_buf);
+    free(path);
+
+    return ok;
 }
 
 // Create a vault (verifier) file at checkFilePath using password.
@@ -542,73 +576,75 @@ char* NotesNameToFileName(const char* notesName)
     if (!enc_buf) {
         return NULL;
     }
-    
+
     size_t b64_len = sodium_base64_encoded_len(enc_len, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
-    char* fileName = calloc(b64_len + 4, 1);
-    if (!fileName)
-    {
+
+    // +4 for ".enc" (b64_len already includes space for '\0')
+    char* fileName = (char*)calloc(b64_len + 4, 1);
+    if (!fileName) {
         free(enc_buf);
         return NULL;
     }
-    if (sodium_bin2base64(fileName, b64_len, enc_buf, enc_len, sodium_base64_VARIANT_URLSAFE_NO_PADDING) != 0)
-    {
+
+    // ✅ libsodium returns the destination pointer (fileName) or NULL on failure
+    if (sodium_bin2base64(fileName, b64_len, enc_buf, enc_len,
+                          sodium_base64_VARIANT_URLSAFE_NO_PADDING) == NULL) {
         free(enc_buf);
+        free(fileName);
         return NULL;
     }
+
     free(enc_buf);
-    
+
+    // Append extension; buffer is big enough: (b64_len includes '\0') + 4 chars + new '\0'
     strcat(fileName, ".enc");
-    
     return fileName;
 }
+
 
 char* FileNameToNotesName(const char* fileName)
 {
     size_t fileNameLen = strlen(fileName);
     if (fileNameLen <= 4)
-    {
         return NULL;
-    }
-    
-    char* b64Part = calloc(fileNameLen - 4 + 1, 1);
+
+    size_t b64Len = fileNameLen - 4;
+
+    char* b64Part = calloc(b64Len + 1, 1);
     if (!b64Part)
         return NULL;
-        
-    size_t b64Len = fileNameLen - 4;
     memcpy(b64Part, fileName, b64Len);
     b64Part[b64Len] = '\0';
-    
-    size_t binDataSize = fileNameLen - 4 - 1;
-    unsigned char *binData = calloc(binDataSize, 1);
-    if (!binData)
-    {
+
+    // Proper decoded buffer size
+    size_t binDataSize = (b64Len * 3) / 4 + 3;
+    unsigned char* binData = calloc(binDataSize, 1);
+    if (!binData) {
         free(b64Part);
         return NULL;
     }
-    
+
     size_t binLen;
     if (sodium_base642bin(
-        binData, binDataSize,
-        b64Part, strlen(b64Part),
-        NULL, &binLen, NULL,
-        sodium_base64_VARIANT_URLSAFE_NO_PADDING
-    ) != 0)
+            binData, binDataSize,
+            b64Part, strlen(b64Part),
+            NULL, &binLen, NULL,
+            sodium_base64_VARIANT_URLSAFE_NO_PADDING
+        ) != 0) // ✅ correct check
     {
         free(b64Part);
         free(binData);
         return NULL;
     }
     free(b64Part);
-    
+
     size_t plain_len;
     unsigned char* plain = DecryptBuffer(binData, binLen, &plain_len);
-    if(!plain)
-    {
-        free(binData);
-        return NULL;
-    }
-    
     free(binData);
-    
-    return (char*)plain;
+
+    if (!plain)
+        return NULL;
+
+    return (char*)plain; // caller frees
 }
+

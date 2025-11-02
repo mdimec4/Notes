@@ -1,0 +1,12 @@
+#include <windows.h>
+
+101 DIALOGEX 0, 0, 220, 100
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "New Note"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT           "Enter note name:", -1, 10, 10, 200, 12
+    EDITTEXT        1000, 10, 25, 200, 14, ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK", IDOK, 50, 55, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 120, 55, 50, 14
+END

@@ -19,4 +19,7 @@ int IsPasswordIsSet(const char* checkFilePath);
 int Init(void);
 void Logout(void);
 
+char* NotesNameToFileName(const char* notesName);
+char* FileNameToNotesName(const char* fileName);
+
 #endif // CORE_H
