@@ -542,73 +542,75 @@ char* NotesNameToFileName(const char* notesName)
     if (!enc_buf) {
         return NULL;
     }
-    
+
     size_t b64_len = sodium_base64_encoded_len(enc_len, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
-    char* fileName = calloc(b64_len + 4, 1);
-    if (!fileName)
-    {
+
+    // +4 for ".enc" (b64_len already includes space for '\0')
+    char* fileName = (char*)calloc(b64_len + 4, 1);
+    if (!fileName) {
         free(enc_buf);
         return NULL;
     }
-    if (sodium_bin2base64(fileName, b64_len, enc_buf, enc_len, sodium_base64_VARIANT_URLSAFE_NO_PADDING) != 0)
-    {
+
+    // ✅ libsodium returns the destination pointer (fileName) or NULL on failure
+    if (sodium_bin2base64(fileName, b64_len, enc_buf, enc_len,
+                          sodium_base64_VARIANT_URLSAFE_NO_PADDING) == NULL) {
         free(enc_buf);
+        free(fileName);
         return NULL;
     }
+
     free(enc_buf);
-    
+
+    // Append extension; buffer is big enough: (b64_len includes '\0') + 4 chars + new '\0'
     strcat(fileName, ".enc");
-    
     return fileName;
 }
+
 
 char* FileNameToNotesName(const char* fileName)
 {
     size_t fileNameLen = strlen(fileName);
     if (fileNameLen <= 4)
-    {
         return NULL;
-    }
-    
-    char* b64Part = calloc(fileNameLen - 4 + 1, 1);
+
+    size_t b64Len = fileNameLen - 4;
+
+    char* b64Part = calloc(b64Len + 1, 1);
     if (!b64Part)
         return NULL;
-        
-    size_t b64Len = fileNameLen - 4;
     memcpy(b64Part, fileName, b64Len);
     b64Part[b64Len] = '\0';
-    
-    size_t binDataSize = fileNameLen - 4 - 1;
-    unsigned char *binData = calloc(binDataSize, 1);
-    if (!binData)
-    {
+
+    // Proper decoded buffer size
+    size_t binDataSize = (b64Len * 3) / 4 + 3;
+    unsigned char* binData = calloc(binDataSize, 1);
+    if (!binData) {
         free(b64Part);
         return NULL;
     }
-    
+
     size_t binLen;
     if (sodium_base642bin(
-        binData, binDataSize,
-        b64Part, strlen(b64Part),
-        NULL, &binLen, NULL,
-        sodium_base64_VARIANT_URLSAFE_NO_PADDING
-    ) != 0)
+            binData, binDataSize,
+            b64Part, strlen(b64Part),
+            NULL, &binLen, NULL,
+            sodium_base64_VARIANT_URLSAFE_NO_PADDING
+        ) != 0) // ✅ correct check
     {
         free(b64Part);
         free(binData);
         return NULL;
     }
     free(b64Part);
-    
+
     size_t plain_len;
     unsigned char* plain = DecryptBuffer(binData, binLen, &plain_len);
-    if(!plain)
-    {
-        free(binData);
-        return NULL;
-    }
-    
     free(binData);
-    
-    return (char*)plain;
+
+    if (!plain)
+        return NULL;
+
+    return (char*)plain; // caller frees
 }
+

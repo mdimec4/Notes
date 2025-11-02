@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -O2 -municode -mwindows
+CFLAGS = -Wall -O0 -g -municode -mwindows
 LIBS = -lws2_32 -lshlwapi -lcomctl32 -lgdi32 -ladvapi32 -lsodium
 TARGET = SecureNotes.exe
 SRC = main.c core.c aes.c resources.o
