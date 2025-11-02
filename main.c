@@ -415,7 +415,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 gAutoSaveTimer = 0;
                 if (gTextChanged && gCurrentNote) {
                     SaveEncryptedText(hEdit);
-                gTextChanged = FALSE;
+                    gTextChanged = FALSE;
                 }
             }
         break;
