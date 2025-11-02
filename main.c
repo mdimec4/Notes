@@ -58,31 +58,59 @@ static void NotesList_SaveToDisk(void)
 {
     FILE* f = fopen(".\\notes.index", "w");
     if (!f) return;
+
+    char nameUtf8[512];
     for (NoteEntry* n = gNotes; n; n = n->next)
-        fwprintf(f, L"%ls\t%hs\n", n->name, n->fileName);
+    {
+        int len = WideCharToMultiByte(CP_UTF8, 0, n->name, -1, nameUtf8, sizeof(nameUtf8), NULL, NULL);
+        if (len > 0)
+            fprintf(f, "%s\t%s\n", nameUtf8, n->fileName);
+    }
+
     fclose(f);
 }
 
 static void NotesList_LoadFromDisk(HWND hNotesList)
 {
-    FILE* f = _wfopen(L".\\notes.index", L"r, ccs=UTF-8");
+    FILE* f = fopen(".\\notes.index", "r");
     if (!f) return;
 
-    wchar_t name[256];
-    char fileName[512];
-    while (fwscanf(f, L"%255ls\t%511s\n", name, fileName) == 2) {
+    char line[1024];
+    while (fgets(line, sizeof(line), f))
+    {
+        // Trim CR/LF
+        char* p = strpbrk(line, "\r\n");
+        if (p) *p = '\0';
+
+        // Split at last tab
+        char* tab = strrchr(line, '\t');
+        if (!tab) continue;
+        *tab = '\0';
+        char* nameUtf8 = line;
+        char* fileName = tab + 1;
+
+        // Convert UTF-8 name back to wide
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, nameUtf8, -1, NULL, 0);
+        if (wlen <= 0) continue;
+        wchar_t* wname = malloc(wlen * sizeof(wchar_t));
+        if (!wname) continue;
+        MultiByteToWideChar(CP_UTF8, 0, nameUtf8, -1, wname, wlen);
+
         NoteEntry* n = calloc(1, sizeof(NoteEntry));
-        wcscpy_s(n->name, 256, name);
+        if (!n) { free(wname); continue; }
+        wcscpy_s(n->name, 256, wname);
+        free(wname);
         n->fileName = _strdup(fileName);
+
         n->next = gNotes;
         gNotes = n;
 
         int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)n->name);
         SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)n);
     }
+
     fclose(f);
 }
-
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
@@ -258,6 +286,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else if (LOWORD(wParam) == 1003) // Logout
         {
+            if (gCurrentNote) {
+                /* Save what’s in the editor, even if user didn't type */
+                SaveEncryptedText(hEdit);
+            }
+            NotesList_SaveToDisk();
+            
             DestroyEditorUI();
             Logout();
             isUnlocked = FALSE;
@@ -319,6 +353,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 SetWindowTextW(hEdit, L"");
                 EnableWindow(hEdit, TRUE);
                 gTextChanged = FALSE;
+                EncryptAndSaveFile(".\\", gCurrentNote->fileName, "");
                 NotesList_SaveToDisk();
             }
         }

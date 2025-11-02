@@ -76,6 +76,7 @@ static char* JonPath(const char* saveDirPath, const char* fileName) {
 // Utility: extract filename from full path (cross-platform).
 // Returns a newly allocated string containing just the file name,
 // or NULL on error.
+/*
 static char* GetFileName(const char* fullPath)
 {
     assert(fullPath != NULL);
@@ -104,6 +105,7 @@ static char* GetFileName(const char* fullPath)
     memcpy(fileName, fileNamePtr, len);
     return fileName;
 }
+*/
 
 // Read entire file into heap buffer. On success returns pointer (must free) and sets *fileLen.
 // On failure returns NULL and *fileLen is undefined.
