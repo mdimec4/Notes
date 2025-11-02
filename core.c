@@ -16,13 +16,16 @@
 #include <arpa/inet.h> // for htonl/ntohl on non-windows (if ever)
 #endif
 
+#include <sys/stat.h>
 #include <sodium.h> // libsodium
+
 
 #include "aes.h"
 
 #ifndef MAX_PATH
 #define MAX_PATH 260
 #endif
+
 
 // Globals used by AES routines (from your original PoC)
 unsigned char key[AES_KEYLEN] = {0}; // AES_KEYLEN expected to be 32
@@ -303,31 +306,6 @@ static unsigned char* DecryptBuffer(const unsigned char* in_buf, size_t in_len, 
 // 🔹 High-level functions (file handling)
 // ------------------------------------------------------
 
-int EncryptAndSaveFile(const char* dir, const char* name, const char* text) {
-    assert(dir && name && text);
-
-    if (!IsKeyLoaded()) {
-        fprintf(stderr, "Error: AES key not loaded.\n");
-        return 0;
-    }
-
-    char* path = JonPath(dir, name);
-    if (!path) return 0;
-
-    size_t enc_len;
-    unsigned char* enc_buf = EncryptBuffer((const unsigned char*)text, strlen(text), &enc_len);
-    if (!enc_buf) {
-        free(path);
-        return 0;
-    }
-
-    int ok = WriteBufferToFile(path, enc_buf, enc_len);
-
-    free(enc_buf);
-    free(path);
-    return ok;
-}
-
 char* ReadFileAndDecrypt(const char* dir, const char* name) {
     assert(dir && name);
 
@@ -354,6 +332,60 @@ char* ReadFileAndDecrypt(const char* dir, const char* name) {
 
     free(file_buf);
     return (char*)plain; // caller frees
+}
+
+int EncryptAndSaveFile(const char* dir, const char* name, const char* text)
+{
+    assert(dir && name && text);
+
+    if (!IsKeyLoaded()) {
+        fprintf(stderr, "Error: AES key not loaded.\n");
+        return 0;
+    }
+
+    char* path = JonPath(dir, name);
+    if (!path)
+        return 0;
+
+    // --- 1. Check if an identical note already exists ---
+    struct stat st;
+    if (stat(path, &st) == 0 && st.st_size > 0)
+    {
+        // Try to decrypt existing file
+        unsigned char* oldPlain = (unsigned char*)ReadFileAndDecrypt(dir, name);
+        if (oldPlain)
+        {
+            // Compare decrypted contents to new plaintext
+            if (strcmp((const char*)oldPlain, text) == 0)
+            {
+                sodium_memzero(oldPlain, strlen((char*)oldPlain));
+                free(oldPlain);
+                free(path);
+                return 1; // identical — skip re-encryption
+            }
+            sodium_memzero(oldPlain, strlen((char*)oldPlain));
+            free(oldPlain);
+        }
+    }
+
+    // --- 2. Encrypt new text ---
+    size_t enc_len = 0;
+    unsigned char* enc_buf = EncryptBuffer((const unsigned char*)text, strlen(text), &enc_len);
+    if (!enc_buf)
+    {
+        free(path);
+        return 0;
+    }
+
+    // --- 3. Write encrypted data to disk ---
+    int ok = WriteBufferToFile(path, enc_buf, enc_len);
+
+    // --- 4. Secure cleanup ---
+    sodium_memzero(enc_buf, enc_len);
+    free(enc_buf);
+    free(path);
+
+    return ok;
 }
 
 // Create a vault (verifier) file at checkFilePath using password.

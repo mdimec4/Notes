@@ -553,8 +553,52 @@ void ShowEditorUI(HWND hwnd)
 
 void DestroyEditorUI(void)
 {
-    DestroyWindow(hEdit);
-    DestroyWindow(hLogoutButton);
+    // Stop any pending autosave timer
+    if (gAutoSaveTimer) {
+        KillTimer(NULL, AUTOSAVE_TIMER_ID);
+        gAutoSaveTimer = 0;
+    }
+
+    // Securely clear text before destroying the editor control
+    if (hEdit && IsWindow(hEdit)) {
+        int len = GetWindowTextLengthW(hEdit);
+        if (len > 0) {
+            wchar_t* buf = (wchar_t*)malloc((len + 1) * sizeof(wchar_t));
+            if (buf) {
+                GetWindowTextW(hEdit, buf, len + 1);
+                SecureZeroMemory(buf, (len + 1) * sizeof(wchar_t));
+                free(buf);
+            }
+        }
+        SetWindowTextW(hEdit, L"");
+        DestroyWindow(hEdit);
+        hEdit = NULL;
+    }
+
+    // Destroy all remaining editor UI elements
+    if (hLogoutButton && IsWindow(hLogoutButton)) {
+        DestroyWindow(hLogoutButton);
+        hLogoutButton = NULL;
+    }
+
+    if (hNotesList && IsWindow(hNotesList)) {
+        DestroyWindow(hNotesList);
+        hNotesList = NULL;
+    }
+
+    if (hNewNoteButton && IsWindow(hNewNoteButton)) {
+        DestroyWindow(hNewNoteButton);
+        hNewNoteButton = NULL;
+    }
+
+    if (hDeleteNoteButton && IsWindow(hDeleteNoteButton)) {
+        DestroyWindow(hDeleteNoteButton);
+        hDeleteNoteButton = NULL;
+    }
+
+    // Reset globals
+    gCurrentNote = NULL;
+    gTextChanged = FALSE;
 }
 
 void LoadAndDecryptText(HWND hEdit)
