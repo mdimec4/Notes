@@ -277,7 +277,7 @@ static unsigned char* DecryptBuffer(const unsigned char* in_buf, size_t in_len, 
     uint32_t be_len;
     memcpy(&be_len, tmp, sizeof(be_len));
     uint32_t plain_len = ntohl(be_len);
-
+    
     if (plain_len > enc_len - sizeof(be_len)) {
         fprintf(stderr, "Corrupted data (length mismatch)\n");
         free(tmp);

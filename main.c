@@ -13,13 +13,26 @@
 #pragma comment(lib, "Advapi32.lib")
 #endif
 
+#define AUTOSAVE_TIMER_ID 42
+#define AUTOSAVE_DELAY_MS 2000
+
+typedef struct NoteEntry {
+    wchar_t name[256];
+    char* fileName;  // malloc'ed
+    struct NoteEntry* next;
+} NoteEntry;
+
+static NoteEntry* gNotes = NULL;
+static NoteEntry* gCurrentNote = NULL;
+static UINT_PTR gAutoSaveTimer = 0;
+static BOOL gTextChanged = FALSE;
+
 HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton;
-HWND hEdit, hSaveButton, hLogoutButton;
+HWND hEdit, hLogoutButton;
 HFONT hFont;
 BOOL isUnlocked = FALSE;
 
 HWND hNotesList, hNewNoteButton, hDeleteNoteButton;
-wchar_t currentNoteName[256] = L"";
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void ShowLoginUI(HWND hwnd);
@@ -28,6 +41,48 @@ void DestroyLoginUI(void);
 void DestroyEditorUI(void);
 void LoadAndDecryptText(HWND hEdit);
 void SaveEncryptedText(HWND hEdit);
+
+static void NotesList_FreeAll(void)
+{
+    NoteEntry* cur = gNotes;
+    while (cur) {
+        NoteEntry* next = cur->next;
+        if (cur->fileName) { SecureZeroMemory(cur->fileName, strlen(cur->fileName)); free(cur->fileName); }
+        free(cur);
+        cur = next;
+    }
+    gNotes = NULL;
+}
+
+static void NotesList_SaveToDisk(void)
+{
+    FILE* f = fopen(".\\notes.index", "w");
+    if (!f) return;
+    for (NoteEntry* n = gNotes; n; n = n->next)
+        fwprintf(f, L"%ls\t%hs\n", n->name, n->fileName);
+    fclose(f);
+}
+
+static void NotesList_LoadFromDisk(HWND hNotesList)
+{
+    FILE* f = _wfopen(L".\\notes.index", L"r, ccs=UTF-8");
+    if (!f) return;
+
+    wchar_t name[256];
+    char fileName[512];
+    while (fwscanf(f, L"%255ls\t%511s\n", name, fileName) == 2) {
+        NoteEntry* n = calloc(1, sizeof(NoteEntry));
+        wcscpy_s(n->name, 256, name);
+        n->fileName = _strdup(fileName);
+        n->next = gNotes;
+        gNotes = n;
+
+        int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)n->name);
+        SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)n);
+    }
+    fclose(f);
+}
+
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
@@ -193,7 +248,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                  isUnlocked = TRUE;
                  DestroyLoginUI();
                  ShowEditorUI(hwnd);
-                 LoadAndDecryptText(hEdit);
              }
              else
              {
@@ -201,10 +255,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
              }
 
              return 0;
-        }
-        else if (LOWORD(wParam) == 1002) // Save
-        {
-            SaveEncryptedText(hEdit);
         }
         else if (LOWORD(wParam) == 1003) // Logout
         {
@@ -215,79 +265,107 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
         else if (LOWORD(wParam) == 3000 && HIWORD(wParam) == LBN_SELCHANGE) {
+            // Auto-save current note before switching
+            if (gCurrentNote && gTextChanged) {
+                SaveEncryptedText(hEdit);
+                gTextChanged = FALSE;
+            }
+
             int sel = (int)SendMessage(hNotesList, LB_GETCURSEL, 0, 0);
             if (sel != LB_ERR) {
-                wchar_t wNote[256];
-                SendMessage(hNotesList, LB_GETTEXT, sel, (LPARAM)wNote);
-
-                wcscpy_s(currentNoteName, 256, wNote);
-                LoadAndDecryptText(hEdit);
-
-                EnableWindow(hEdit, TRUE);
-                EnableWindow(hSaveButton, TRUE);
+                gCurrentNote = (NoteEntry*)SendMessage(hNotesList, LB_GETITEMDATA, sel, 0);
+                if (gCurrentNote) {
+                    LoadAndDecryptText(hEdit);
+                    gTextChanged = FALSE;
+                    EnableWindow(hEdit, TRUE);
+                }
             }
         }
         else if (LOWORD(wParam) == 3001) { // New Note
             wchar_t wNewName[256] = L"";
-
             if (DialogBoxParamW(GetModuleHandle(NULL), MAKEINTRESOURCE(101), hwnd, NewNoteDialogProc, (LPARAM)wNewName) == IDOK) {
-                // Trim whitespace
-                for (wchar_t* p = wNewName; *p; ++p) {
-                    if (*p == L'\r' || *p == L'\n') *p = 0;
-                }
-
-                // Check for empty
                 if (wcslen(wNewName) == 0) {
                     MessageBox(hwnd, L"Note name cannot be empty.", L"Error", MB_ICONERROR);
                     return 0;
                 }
 
                 // Check duplicates
-                int count = (int)SendMessage(hNotesList, LB_GETCOUNT, 0, 0);
-                for (int i = 0; i < count; i++) {
-                    wchar_t existing[256];
-                    SendMessage(hNotesList, LB_GETTEXT, i, (LPARAM)existing);
-                    if (_wcsicmp(existing, wNewName) == 0) {
-                        MessageBox(hwnd, L"A note with this name already exists.", L"Error", MB_ICONERROR);
+                for (NoteEntry* n = gNotes; n; n = n->next)
+                    if (_wcsicmp(n->name, wNewName) == 0) {
+                        MessageBox(hwnd, L"Note already exists.", L"Error", MB_ICONERROR);
                         return 0;
                     }
+
+                char noteNameUtf8[256];
+                WideCharToMultiByte(CP_UTF8, 0, wNewName, -1, noteNameUtf8, sizeof(noteNameUtf8), NULL, NULL);
+                char* fileName = NotesNameToFileName(noteNameUtf8);
+                if (!fileName) {
+                    MessageBox(hwnd, L"Failed to create filename.", L"Error", MB_ICONERROR);
+                    return 0;
                 }
 
-                // Add and select
-                SendMessage(hNotesList, LB_ADDSTRING, 0, (LPARAM)wNewName);
-                SendMessage(hNotesList, LB_SETCURSEL, count, 0);
-                wcscpy_s(currentNoteName, 256, wNewName);
+                // Create note entry
+                NoteEntry* n = calloc(1, sizeof(NoteEntry));
+                wcscpy_s(n->name, 256, wNewName);
+                n->fileName = fileName;
+                n->next = gNotes;
+                gNotes = n;
+
+                int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)n->name);
+                SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)n);
+                SendMessageW(hNotesList, LB_SETCURSEL, idx, 0);
+
+                gCurrentNote = n;
                 SetWindowTextW(hEdit, L"");
-
-                // Enable editor & save
                 EnableWindow(hEdit, TRUE);
-                EnableWindow(hSaveButton, TRUE);
+                gTextChanged = FALSE;
+                NotesList_SaveToDisk();
             }
         }
-        else if (LOWORD(wParam) == 3002) { // Delete Note
+        else if (LOWORD(wParam) == 3002) { // Delete
             int sel = (int)SendMessage(hNotesList, LB_GETCURSEL, 0, 0);
-            if (sel != LB_ERR) {
-                wchar_t wNote[256];
-                SendMessage(hNotesList, LB_GETTEXT, sel, (LPARAM)wNote);
+            if (sel == LB_ERR) return 0;
 
-                int confirm = MessageBox(hwnd, L"Delete this note permanently?", L"Confirm", MB_YESNO | MB_ICONWARNING);
-                if (confirm == IDYES) {
-                    char noteNameUtf8[256];
-                    WideCharToMultiByte(CP_UTF8, 0, wNote, -1, noteNameUtf8, sizeof(noteNameUtf8), NULL, NULL);
-                    char* fileName = NotesNameToFileName(noteNameUtf8);
-                    if (fileName) {
-                        char path[MAX_PATH];
-                        snprintf(path, MAX_PATH, ".\\%s", fileName);
-                        DeleteFileA(path);
-                        free(fileName);
-                    }
-                    SendMessage(hNotesList, LB_DELETESTRING, sel, 0);
-                    SetWindowTextW(hEdit, L"");
+            NoteEntry* n = (NoteEntry*)SendMessage(hNotesList, LB_GETITEMDATA, sel, 0);
+            if (!n) return 0;
+
+            char path[MAX_PATH];
+            snprintf(path, MAX_PATH, ".\\%s", n->fileName);
+            DeleteFileA(path);
+
+            SendMessage(hNotesList, LB_DELETESTRING, sel, 0);
+
+            // Remove from linked list
+            NoteEntry** prev = &gNotes;
+            while (*prev && *prev != n)
+                prev = &(*prev)->next;
+            if (*prev) *prev = n->next;
+
+            SecureZeroMemory(n->fileName, strlen(n->fileName));
+            free(n->fileName);
+            free(n);
+
+            gCurrentNote = NULL;
+            SetWindowTextW(hEdit, L"");
+            EnableWindow(hEdit, FALSE);
+            NotesList_SaveToDisk();
+        }
+        else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
+            gTextChanged = TRUE;
+            if (gAutoSaveTimer)
+                KillTimer(hwnd, AUTOSAVE_TIMER_ID);
+            gAutoSaveTimer = SetTimer(hwnd, AUTOSAVE_TIMER_ID, AUTOSAVE_DELAY_MS, NULL);
+        }
+        break;
+        case WM_TIMER:
+            if (wParam == AUTOSAVE_TIMER_ID) {
+                KillTimer(hwnd, AUTOSAVE_TIMER_ID);
+                gAutoSaveTimer = 0;
+                if (gTextChanged && gCurrentNote) {
+                    SaveEncryptedText(hEdit);
+                gTextChanged = FALSE;
                 }
             }
-        }
-    
-        
         break;
     case WM_CTLCOLORSTATIC:
     {
@@ -302,7 +380,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (isUnlocked)
         {
             MoveWindow(hEdit, 10, 10, rc.right - 20, rc.bottom - 60, TRUE);
-            MoveWindow(hSaveButton, rc.right - 160, rc.bottom - 40, 140, 28, TRUE);
             MoveWindow(hLogoutButton, 10, rc.bottom - 40, 100, 28, TRUE);
         }
         else
@@ -315,11 +392,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
 
-    case WM_DESTROY:
+    case WM_DESTROY: {
+        if (gCurrentNote && gTextChanged)
+            SaveEncryptedText(hEdit);
+        NotesList_SaveToDisk();
+        NotesList_FreeAll();
         Logout();
         DeleteObject(hFont);
         PostQuitMessage(0);
         return 0;
+    }
     }
 
     return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -412,15 +494,9 @@ void ShowEditorUI(HWND hwnd)
         listWidth, 10, rc.right - listWidth - 20, rc.bottom - 80,
         hwnd, (HMENU)2000, NULL, NULL);
         
-        EnableWindow(hEdit, FALSE);
-        EnableWindow(hSaveButton, FALSE);
-
-    // Save and Logout
-    hSaveButton = CreateWindow(
-        L"BUTTON", L"Save Encrypted",
-        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        rc.right - 160, rc.bottom - 60, 140, 28,
-        hwnd, (HMENU)1002, NULL, NULL);
+    NotesList_LoadFromDisk(hNotesList);
+    
+    EnableWindow(hEdit, FALSE);
 
     hLogoutButton = CreateWindow(
         L"BUTTON", L"Logout",
@@ -432,26 +508,7 @@ void ShowEditorUI(HWND hwnd)
     SendMessage(hNotesList, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hNewNoteButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hDeleteNoteButton, WM_SETFONT, (WPARAM)hFont, TRUE);
-    SendMessage(hSaveButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hLogoutButton, WM_SETFONT, (WPARAM)hFont, TRUE);
-
-    // Populate notes list
-    WIN32_FIND_DATAA ffd;
-    HANDLE hFind = FindFirstFileA(".\\*.enc", &ffd);
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            char* noteName = FileNameToNotesName(ffd.cFileName);
-            if (noteName) {
-                int wlen = MultiByteToWideChar(CP_UTF8, 0, noteName, -1, NULL, 0);
-                wchar_t* wNote = malloc(wlen * sizeof(wchar_t));
-                MultiByteToWideChar(CP_UTF8, 0, noteName, -1, wNote, wlen);
-                SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)wNote);
-                free(wNote);
-                free(noteName);
-            }
-        } while (FindNextFileA(hFind, &ffd));
-        FindClose(hFind);
-    }
     
     int count = (int)SendMessage(hNotesList, LB_GETCOUNT, 0, 0);
     if (count == 0) {
@@ -462,24 +519,17 @@ void ShowEditorUI(HWND hwnd)
 void DestroyEditorUI(void)
 {
     DestroyWindow(hEdit);
-    DestroyWindow(hSaveButton);
     DestroyWindow(hLogoutButton);
 }
 
 void LoadAndDecryptText(HWND hEdit)
 {
-    if (wcslen(currentNoteName) == 0)
+    if (!gCurrentNote || !gCurrentNote->fileName || !*gCurrentNote->fileName) {
+        SetWindowTextW(hEdit, L"");
         return;
+    }
 
-    char noteNameUtf8[256];
-    WideCharToMultiByte(CP_UTF8, 0, currentNoteName, -1, noteNameUtf8, sizeof(noteNameUtf8), NULL, NULL);
-
-    char* fileName = NotesNameToFileName(noteNameUtf8);
-    if (!fileName) return;
-
-    char* text = ReadFileAndDecrypt(".\\", fileName);
-    free(fileName);
-
+    char* text = ReadFileAndDecrypt(".\\", gCurrentNote->fileName);
     if (!text) {
         SetWindowTextW(hEdit, L"");
         return;
@@ -490,65 +540,35 @@ void LoadAndDecryptText(HWND hEdit)
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wtext, wlen);
     SetWindowTextW(hEdit, wtext);
 
-    free(wtext);
     SecureZeroMemory(text, strlen(text));
     free(text);
+    free(wtext);
 }
-
-
 
 void SaveEncryptedText(HWND hEdit)
 {
-    if (wcslen(currentNoteName) == 0)
+    if (!gCurrentNote || !gCurrentNote->fileName || !*gCurrentNote->fileName)
         return;
 
-    // Dynamically query text length
     int wlen = GetWindowTextLengthW(hEdit);
-    if (wlen <= 0)
-        return;
+    if (wlen < 0) return;
 
-    wchar_t* wtext = (wchar_t*)malloc((wlen + 1) * sizeof(wchar_t));
-    if (!wtext)
-        return;
-
+    wchar_t* wtext = malloc((wlen + 1) * sizeof(wchar_t));
+    if (!wtext) return;
     GetWindowTextW(hEdit, wtext, wlen + 1);
 
-    // Convert note name to UTF-8 filename
-    char noteNameUtf8[256];
-    WideCharToMultiByte(CP_UTF8, 0, currentNoteName, -1, noteNameUtf8, sizeof(noteNameUtf8), NULL, NULL);
-    char* fileName = NotesNameToFileName(noteNameUtf8);
-    if (!fileName) {
-        free(wtext);
-        return;
-    }
-
-    // Convert note text to UTF-8
     int buflen = WideCharToMultiByte(CP_UTF8, 0, wtext, -1, NULL, 0, NULL, NULL);
-    if (buflen <= 0) {
-        free(fileName);
-        free(wtext);
-        return;
-    }
-
-    char* text = (char*)malloc(buflen);
-    if (!text) {
-        free(fileName);
-        free(wtext);
-        return;
-    }
-
+    char* text = malloc(buflen);
+    if (!text) { free(wtext); return; }
     WideCharToMultiByte(CP_UTF8, 0, wtext, -1, text, buflen, NULL, NULL);
 
-    if (!EncryptAndSaveFile(".\\", fileName, text)) {
+    if (!EncryptAndSaveFile(".\\", gCurrentNote->fileName, text))
         MessageBox(NULL, L"Failed to save encrypted note.", L"Error", MB_ICONERROR);
-    }
 
-    // Securely wipe memory
     SecureZeroMemory(text, buflen);
     SecureZeroMemory(wtext, (wlen + 1) * sizeof(wchar_t));
-
     free(text);
     free(wtext);
-    free(fileName);
 }
+
 
