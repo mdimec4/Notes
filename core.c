@@ -73,6 +73,38 @@ static char* JonPath(const char* saveDirPath, const char* fileName) {
     return ret_buff;
 }
 
+// Utility: extract filename from full path (cross-platform).
+// Returns a newly allocated string containing just the file name,
+// or NULL on error.
+static char* GetFileName(const char* fullPath)
+{
+    assert(fullPath != NULL);
+    if (!fullPath || !*fullPath)
+        return NULL;
+
+    const char* lastSlash = strrchr(fullPath, '\\');  // Windows
+    const char* lastSlashAlt = strrchr(fullPath, '/'); // Unix-style
+
+    // pick whichever occurs later in the string
+    const char* fileNamePtr = lastSlash;
+    if (!fileNamePtr || (lastSlashAlt && lastSlashAlt > fileNamePtr))
+        fileNamePtr = lastSlashAlt;
+
+    // if no slash found, the path *is* the filename
+    if (!fileNamePtr)
+        fileNamePtr = fullPath;
+    else
+        fileNamePtr++; // skip the slash
+
+    size_t len = strlen(fileNamePtr);
+    char* fileName = calloc(len + 1, 1);
+    if (!fileName)
+        return NULL;
+
+    memcpy(fileName, fileNamePtr, len);
+    return fileName;
+}
+
 // Read entire file into heap buffer. On success returns pointer (must free) and sets *fileLen.
 // On failure returns NULL and *fileLen is undefined.
 static char* ReadFileAll(const char* filePath, size_t* fileLen) {
@@ -312,6 +344,11 @@ char* ReadFileAndDecrypt(const char* dir, const char* name) {
 
     size_t plain_len;
     unsigned char* plain = DecryptBuffer(file_buf, file_len, &plain_len);
+    if(!plain)
+    {
+        free(file_buf);
+        return NULL;
+    }
 
     free(file_buf);
     return (char*)plain; // caller frees
@@ -497,3 +534,81 @@ int IsPasswordIsSet(const char* checkFilePath) {
     return (access(checkFilePath, F_OK) == 0) ? 1 : 0;
 }
 
+
+char* NotesNameToFileName(const char* notesName)
+{
+    size_t enc_len;
+    unsigned char* enc_buf = EncryptBuffer((const unsigned char*)notesName, strlen(notesName), &enc_len);
+    if (!enc_buf) {
+        return NULL;
+    }
+    
+    size_t b64_len = sodium_base64_encoded_len(enc_len, sodium_base64_VARIANT_URLSAFE_NO_PADDING);
+    char* fileName = calloc(b64_len + 4, 1);
+    if (!fileName)
+    {
+        free(enc_buf);
+        return NULL;
+    }
+    if (sodium_bin2base64(fileName, b64_len, enc_buf, enc_len, sodium_base64_VARIANT_URLSAFE_NO_PADDING) != 0)
+    {
+        free(enc_buf);
+        return NULL;
+    }
+    free(enc_buf);
+    
+    strcat(fileName, ".enc");
+    
+    return fileName;
+}
+
+char* FileNameToNotesName(const char* fileName)
+{
+    size_t fileNameLen = strlen(fileName);
+    if (fileNameLen <= 4)
+    {
+        return NULL;
+    }
+    
+    char* b64Part = calloc(fileNameLen - 4 + 1, 1);
+    if (!b64Part)
+        return NULL;
+        
+    size_t b64Len = fileNameLen - 4;
+    memcpy(b64Part, fileName, b64Len);
+    b64Part[b64Len] = '\0';
+    
+    size_t binDataSize = fileNameLen - 4 - 1;
+    unsigned char *binData = calloc(binDataSize, 1);
+    if (!binData)
+    {
+        free(b64Part);
+        return NULL;
+    }
+    
+    size_t binLen;
+    if (sodium_base642bin(
+        binData, binDataSize,
+        b64Part, strlen(b64Part),
+        NULL, &binLen, NULL,
+        sodium_base64_VARIANT_URLSAFE_NO_PADDING
+    ) != 0)
+    {
+        free(b64Part);
+        free(binData);
+        return NULL;
+    }
+    free(b64Part);
+    
+    size_t plain_len;
+    unsigned char* plain = DecryptBuffer(binData, binLen, &plain_len);
+    if(!plain)
+    {
+        free(binData);
+        return NULL;
+    }
+    
+    free(binData);
+    
+    return (char*)plain;
+}
