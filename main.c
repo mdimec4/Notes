@@ -397,8 +397,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 EnableWindow(hEdit, TRUE);
                 gTextChanged = FALSE;
                 EncryptAndSaveFile(".\\", gCurrentNote->fileName, "");
-                
-                NotesList_LoadFromDir(hNotesList);
             }
         }
         else if (LOWORD(wParam) == 3002) { // Delete
@@ -427,8 +425,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             gCurrentNote = NULL;
             WipeWindowText(hEdit);
             EnableWindow(hEdit, FALSE);
-            
-            NotesList_LoadFromDir(hNotesList);
         }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
             gTextChanged = TRUE;
