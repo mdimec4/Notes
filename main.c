@@ -431,7 +431,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NotesList_LoadFromDir(hNotesList);
         }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
-            printf("EN_CHANGE fired\n");
             gTextChanged = TRUE;
 
             if (gAutoSaveTimer)
@@ -446,7 +445,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         break;
     case WM_TIMER:
-        printf("[DEBUG] Autosave timer fired\n");
         if (wParam == AUTOSAVE_TIMER_ID) {
             KillTimer(NULL, AUTOSAVE_TIMER_ID);  // thread timer
             gAutoSaveTimer = 0;
@@ -483,7 +481,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
 
     case WM_DESTROY: {
-        printf("WM_DESTROY\n");
         if (gCurrentNote && gTextChanged)
         {
             SaveEncryptedText(hEdit);
