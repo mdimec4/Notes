@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+
 #include "core.h"
 
 #ifdef _MSC_VER
@@ -21,6 +23,11 @@ typedef struct NoteEntry {
     char* fileName;  // malloc'ed
     struct NoteEntry* next;
 } NoteEntry;
+
+struct FileEntry {
+    char fileName[MAX_PATH];
+    FILETIME ftLastWrite;
+};
 
 static NoteEntry* gNotes = NULL;
 static NoteEntry* gCurrentNote = NULL;
@@ -54,62 +61,81 @@ static void NotesList_FreeAll(void)
     gNotes = NULL;
 }
 
-static void NotesList_SaveToDisk(void)
+static int CompareFileEntry(const void* a, const void* b)
 {
-    FILE* f = fopen(".\\notes.index", "w");
-    if (!f) return;
-
-    char nameUtf8[512];
-    for (NoteEntry* n = gNotes; n; n = n->next)
-    {
-        int len = WideCharToMultiByte(CP_UTF8, 0, n->name, -1, nameUtf8, sizeof(nameUtf8), NULL, NULL);
-        if (len > 0)
-            fprintf(f, "%s\t%s\n", nameUtf8, n->fileName);
-    }
-
-    fclose(f);
+    const struct FileEntry* fa = (const struct FileEntry*)a;
+    const struct FileEntry* fb = (const struct FileEntry*)b;
+    return CompareFileTime(&fb->ftLastWrite, &fa->ftLastWrite);
 }
 
-static void NotesList_LoadFromDisk(HWND hNotesList)
+static void NotesList_LoadFromDir(HWND hNotesList)
 {
-    FILE* f = fopen(".\\notes.index", "r");
-    if (!f) return;
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(".\\*.enc", &fd);
+    if (hFind == INVALID_HANDLE_VALUE)
+        return;
 
-    char line[1024];
-    while (fgets(line, sizeof(line), f))
-    {
-        // Trim CR/LF
-        char* p = strpbrk(line, "\r\n");
-        if (p) *p = '\0';
+    struct FileEntry files[512];
+    int fileCount = 0;
 
-        // Split at last tab
-        char* tab = strrchr(line, '\t');
-        if (!tab) continue;
-        *tab = '\0';
-        char* nameUtf8 = line;
-        char* fileName = tab + 1;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            strncpy(files[fileCount].fileName, fd.cFileName, MAX_PATH - 1);
+            files[fileCount].fileName[MAX_PATH - 1] = 0;
+            files[fileCount].ftLastWrite = fd.ftLastWriteTime;
+            fileCount++;
+        }
+    } while (FindNextFileA(hFind, &fd) && fileCount < 512);
 
-        // Convert UTF-8 name back to wide
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, nameUtf8, -1, NULL, 0);
-        if (wlen <= 0) continue;
-        wchar_t* wname = malloc(wlen * sizeof(wchar_t));
-        if (!wname) continue;
-        MultiByteToWideChar(CP_UTF8, 0, nameUtf8, -1, wname, wlen);
+    FindClose(hFind);
 
-        NoteEntry* n = calloc(1, sizeof(NoteEntry));
-        if (!n) { free(wname); continue; }
+    /* Sort by modification time, newest first */
+    qsort(files, fileCount, sizeof(files[0]), CompareFileEntry);
+
+    NotesList_FreeAll();
+    SendMessageW(hNotesList, LB_RESETCONTENT, 0, 0);
+
+    for (int i = 0; i < fileCount; i++) {
+        char* noteNameUtf8 = FileNameToNotesName(files[i].fileName);
+        if (!noteNameUtf8)
+            continue;
+
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, noteNameUtf8, -1, NULL, 0);
+        if (wlen <= 0) {
+            SecureZeroMemory(noteNameUtf8, strlen(noteNameUtf8));
+            free(noteNameUtf8);
+            continue;
+        }
+
+        wchar_t* wname = (wchar_t*)malloc(wlen * sizeof(wchar_t));
+        if (!wname) {
+            SecureZeroMemory(noteNameUtf8, strlen(noteNameUtf8));
+            free(noteNameUtf8);
+            continue;
+        }
+
+        MultiByteToWideChar(CP_UTF8, 0, noteNameUtf8, -1, wname, wlen);
+
+        NoteEntry* n = (NoteEntry*)calloc(1, sizeof(NoteEntry));
+        if (!n) {
+            SecureZeroMemory(noteNameUtf8, strlen(noteNameUtf8));
+            free(noteNameUtf8);
+            free(wname);
+            continue;
+        }
+
         wcscpy_s(n->name, 256, wname);
-        free(wname);
-        n->fileName = _strdup(fileName);
-
+        n->fileName = _strdup(files[i].fileName);
         n->next = gNotes;
         gNotes = n;
 
         int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)n->name);
         SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)n);
-    }
 
-    fclose(f);
+        SecureZeroMemory(noteNameUtf8, strlen(noteNameUtf8));
+        free(noteNameUtf8);
+        free(wname);
+    }
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
@@ -307,7 +333,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 /* Save what’s in the editor, even if user didn't type */
                 SaveEncryptedText(hEdit);
             }
-            NotesList_SaveToDisk();
             
             DestroyEditorUI();
             Logout();
@@ -324,6 +349,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
             int sel = (int)SendMessage(hNotesList, LB_GETCURSEL, 0, 0);
             if (sel != LB_ERR) {
+                SaveEncryptedText(hEdit);
                 gCurrentNote = (NoteEntry*)SendMessage(hNotesList, LB_GETITEMDATA, sel, 0);
                 if (gCurrentNote) {
                     LoadAndDecryptText(hEdit);
@@ -371,7 +397,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 EnableWindow(hEdit, TRUE);
                 gTextChanged = FALSE;
                 EncryptAndSaveFile(".\\", gCurrentNote->fileName, "");
-                NotesList_SaveToDisk();
+                
+                NotesList_LoadFromDir(hNotesList);
             }
         }
         else if (LOWORD(wParam) == 3002) { // Delete
@@ -384,7 +411,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             char path[MAX_PATH];
             snprintf(path, MAX_PATH, ".\\%s", n->fileName);
             DeleteFileA(path);
-
+            
             SendMessage(hNotesList, LB_DELETESTRING, sel, 0);
 
             // Remove from linked list
@@ -400,7 +427,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             gCurrentNote = NULL;
             WipeWindowText(hEdit);
             EnableWindow(hEdit, FALSE);
-            NotesList_SaveToDisk();
+            
+            NotesList_LoadFromDir(hNotesList);
         }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
             printf("EN_CHANGE fired\n");
@@ -461,7 +489,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             SaveEncryptedText(hEdit);
             gTextChanged = FALSE;
         }
-        NotesList_SaveToDisk();
         NotesList_FreeAll();
         
         if (hEdit && IsWindow(hEdit)) {
@@ -569,7 +596,7 @@ void ShowEditorUI(HWND hwnd)
     // Subscribe to EN_CHANGE notifications
     SendMessage(hEdit, EM_SETEVENTMASK, 0, ENM_CHANGE);
     
-    NotesList_LoadFromDisk(hNotesList);
+    NotesList_LoadFromDir(hNotesList);
     
     EnableWindow(hEdit, FALSE);
 
