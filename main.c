@@ -403,21 +403,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NotesList_SaveToDisk();
         }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
+            printf("EN_CHANGE fired\n");
             gTextChanged = TRUE;
+
             if (gAutoSaveTimer)
-                KillTimer(hwnd, AUTOSAVE_TIMER_ID);
-            gAutoSaveTimer = SetTimer(hwnd, AUTOSAVE_TIMER_ID, AUTOSAVE_DELAY_MS, NULL);
+                KillTimer(NULL, AUTOSAVE_TIMER_ID);  // use thread timer
+
+            gAutoSaveTimer = SetTimer(
+                NULL,                      // NULL = thread timer (not window-specific)
+                AUTOSAVE_TIMER_ID,
+                AUTOSAVE_DELAY_MS,
+                NULL
+            );
         }
         break;
-        case WM_TIMER:
-            if (wParam == AUTOSAVE_TIMER_ID) {
-                KillTimer(hwnd, AUTOSAVE_TIMER_ID);
-                gAutoSaveTimer = 0;
-                if (gTextChanged && gCurrentNote) {
-                    SaveEncryptedText(hEdit);
-                    gTextChanged = FALSE;
-                }
+    case WM_TIMER:
+        printf("[DEBUG] Autosave timer fired\n");
+        if (wParam == AUTOSAVE_TIMER_ID) {
+            KillTimer(NULL, AUTOSAVE_TIMER_ID);  // thread timer
+            gAutoSaveTimer = 0;
+
+            if (gTextChanged && gCurrentNote) {
+                SaveEncryptedText(hEdit);
+                gTextChanged = FALSE;
             }
+        }
         break;
     case WM_CTLCOLORSTATIC:
     {
@@ -445,12 +455,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     }
 
     case WM_DESTROY: {
+        printf("WM_DESTROY\n");
         if (gCurrentNote && gTextChanged)
+        {
             SaveEncryptedText(hEdit);
+            gTextChanged = FALSE;
+        }
         NotesList_SaveToDisk();
         NotesList_FreeAll();
         
-        DestroyEditorUI();
+        if (hEdit && IsWindow(hEdit)) {
+            WipeWindowText(hEdit);
+            DestroyWindow(hEdit);
+        }
         
         Logout();
         DeleteObject(hFont);
@@ -549,6 +566,9 @@ void ShowEditorUI(HWND hwnd)
         listWidth, 10, rc.right - listWidth - 20, rc.bottom - 80,
         hwnd, (HMENU)2000, NULL, NULL);
         
+    // Subscribe to EN_CHANGE notifications
+    SendMessage(hEdit, EM_SETEVENTMASK, 0, ENM_CHANGE);
+    
     NotesList_LoadFromDisk(hNotesList);
     
     EnableWindow(hEdit, FALSE);
@@ -575,7 +595,7 @@ void DestroyEditorUI(void)
 {
     // Stop any pending autosave timer
     if (gAutoSaveTimer) {
-        KillTimer(NULL, AUTOSAVE_TIMER_ID);
+        KillTimer(NULL, AUTOSAVE_TIMER_ID); // or store hwnd in a global
         gAutoSaveTimer = 0;
     }
 
