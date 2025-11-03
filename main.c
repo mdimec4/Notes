@@ -392,11 +392,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 NoteEntry* n = calloc(1, sizeof(NoteEntry));
                 wcscpy_s(n->name, 256, wNewName);
                 n->fileName = fileName;
-                gNotes = md_linked_list_add(gNotes, n);
+               
+               // prepend to linked list
+               md_linked_list_el* new_el = calloc(1, sizeof(md_linked_list_el));
+               new_el->prev = NULL;
+               new_el->next = gNotes;
+               new_el->data = n;
+               gNotes->prev = new_el;
+               gNotes = new_el;
 
-                int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)n->name);
-                SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)n);
-                SendMessageW(hNotesList, LB_SETCURSEL, idx, 0);
+                // re-populate notes list
+                SendMessageW(hNotesList, LB_RESETCONTENT, 0, 0);
+                BOOL isNewElement = TRUE;
+                for(md_linked_list_el* el = gNotes; el; el = el->next){
+                    NoteEntry* ne = (NoteEntry*)el->data;
+                    
+                    int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)ne->name);
+                    SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)ne);
+                    if (isNewElement)
+                    {
+                        SendMessageW(hNotesList, LB_SETCURSEL, idx, 0);
+                        isNewElement = FALSE;
+                    }
+                }
+                    
 
                 gCurrentNote = n;
                 SetWindowTextW(hEdit, L"");

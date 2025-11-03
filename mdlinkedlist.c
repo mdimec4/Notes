@@ -14,7 +14,7 @@ md_linked_list_el* md_linked_list_add(md_linked_list_el* exist_el, void* data)
         while(last_el->next) last_el = last_el->next;
         
         last_el->next = new_el;
-        
+        new_el->prev = last_el;
         return exist_el;
     }
 
