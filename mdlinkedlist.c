@@ -14,6 +14,8 @@ md_linked_list_el* md_linked_list_add(md_linked_list_el* exist_el, void* data)
         while(last_el->next) last_el = last_el->next;
         
         last_el->next = new_el;
+        
+        return exist_el;
     }
 
     return new_el;
@@ -34,7 +36,7 @@ md_linked_list_el* md_linked_list_remove(md_linked_list_el* start_el, md_linked_
     md_linked_list_el* prev_el = remove_el->prev;
     md_linked_list_el* next_el = remove_el->next;
     
-    if (data_free_fn)
+    if (data_free_fn && remove_el->data)
         data_free_fn(remove_el->data);
     free(remove_el);
     
