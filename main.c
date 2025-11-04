@@ -9,6 +9,7 @@
 
 #include "core.h"
 #include "mdlinkedlist.h"
+#include "resource.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "Comctl32.lib")
@@ -159,15 +160,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
     const wchar_t CLASS_NAME[] = L"SecureNotesWindow";
 
-    WNDCLASS wc = {0};
+       WNDCLASSEX wc = {0};
+    wc.cbSize = sizeof(WNDCLASSEX);
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hIcon = LoadIcon(NULL, IDI_SHIELD);
 
-    RegisterClass(&wc);
+    // Set both large and small icons
+    wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
+    wc.hIconSm = (HICON)LoadImage(
+        hInstance,
+        MAKEINTRESOURCE(IDI_APP_ICON),
+        IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON),
+        0);
+
+    RegisterClassEx(&wc);
 
     HWND hwnd = CreateWindowEx(
         0, CLASS_NAME, L"Secure Notes",
