@@ -1,6 +1,46 @@
 #include <windows.h>
 #include "resource.h"
 
+IDI_APP_ICON ICON "img\\notepad.ico"
+
+///////////////////////////////////////////////////////////////////////////////
+// Version Information
+///////////////////////////////////////////////////////////////////////////////
+
+1 VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0" // U.S. English + Unicode (default)
+        BEGIN
+            VALUE "MD", "MD\0"
+            VALUE "FileDescription", "Secure Notes - Encrypted Note Manager\0"
+            VALUE "FileVersion", "1.0.0.0\0"
+            VALUE "InternalName", "SecureNotes.exe\0"
+            VALUE "LegalCopyright", "© 2025 MD. All rights reserved.\0"
+            VALUE "OriginalFilename", "SecureNotes.exe\0"
+            VALUE "ProductName", "Secure Notes\0"
+            VALUE "ProductVersion", "1.0.0.0\0"
+        END
+    END
+
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END
+
 101 DIALOGEX 0, 0, 220, 100
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "New Note"
@@ -11,5 +51,3 @@ BEGIN
     DEFPUSHBUTTON   "OK", IDOK, 50, 55, 50, 14
     PUSHBUTTON      "Cancel", IDCANCEL, 120, 55, 50, 14
 END
-
-IDI_APP_ICON ICON "img\\notepad.ico"
