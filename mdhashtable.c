@@ -1,7 +1,7 @@
-#include "md_hash_table.h"
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include "mdhashtable.h"
 
 #ifdef _WIN32
 #define strdup _strdup /* Windows-safe strdup, or use strdup on POSIX */
