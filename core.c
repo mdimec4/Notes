@@ -4,6 +4,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <assert.h>
+#include <time.h>
+#include <zip.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -18,6 +20,7 @@
 
 #include <sys/stat.h>
 #include <sodium.h> // libsodium
+#include <dirent.h>
 
 
 #include "aes.h"
@@ -54,7 +57,7 @@ int Init(void)
 }
 
 // Utility: combine path (Windows PathCombineA). Returns newly allocated string or NULL.
-static char* JonPath(const char* saveDirPath, const char* fileName) {
+static char* JoinPath(const char* saveDirPath, const char* fileName) {
     assert(saveDirPath != NULL);
     assert(fileName != NULL);
 
@@ -314,7 +317,7 @@ char* ReadFileAndDecrypt(const char* dir, const char* name) {
         return NULL;
     }
 
-    char* path = JonPath(dir, name);
+    char* path = JoinPath(dir, name);
     if (!path) return NULL;
 
     size_t file_len;
@@ -343,7 +346,7 @@ int EncryptAndSaveFile(const char* dir, const char* name, const char* text)
         return 0;
     }
 
-    char* path = JonPath(dir, name);
+    char* path = JoinPath(dir, name);
     if (!path)
         return 0;
 
@@ -464,7 +467,7 @@ int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath,
         return 0;
     }
 
-    char* filePath = JonPath(checkDirPath, checkFileName);
+    char* filePath = JoinPath(checkDirPath, checkFileName);
     if (!filePath) {
         Logout();
         return 0;
@@ -555,7 +558,7 @@ int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath,
 // Check if password verifier file exists (split path convenience)
 int IsPasswordIsSetSplitPath(const char* checkDirPath, const char* checkFileName) {
     if (!checkDirPath || !checkFileName) return 0;
-    char* filePath = JonPath(checkDirPath, checkFileName);
+    char* filePath = JoinPath(checkDirPath, checkFileName);
     if (!filePath) return 0;
     int ret = (access(filePath, F_OK) == 0) ? 1 : 0;
     free(filePath);
@@ -646,5 +649,116 @@ char* FileNameToNotesName(const char* fileName)
         return NULL;
 
     return (char*)plain; // caller frees
+}
+
+char* MakeSecureNotesZipFilename(void)
+{
+    uint64_t ts = (uint64_t)time(NULL);  // 64-bit timestamp
+    uint32_t rnd = 0;
+
+    randombytes_buf(&rnd, sizeof(rnd));
+
+    char buf[80];
+    int n = snprintf(buf, sizeof(buf), "SecureNotes_%llu_%u.zip",
+                     (unsigned long long)ts, rnd);
+    if (n < 0) return NULL;
+
+    char* out = (char*)malloc((size_t)n + 1);
+    if (!out) return NULL;
+
+    memcpy(out, buf, (size_t)n + 1);
+    return out;
+}
+
+int ExportToZip(const char* sourceDir, const char* targetZipFilePath, const char* checkFileName)
+{
+    if (!sourceDir || !targetZipFilePath || !checkFileName)
+        return -1;
+
+    if (!IsPasswordIsSetSplitPath(sourceDir, checkFileName))
+        return -1;
+
+    int err = 0;
+    zip_t* za = zip_open(targetZipFilePath, ZIP_CREATE | ZIP_EXCL, &err);
+    if (!za) {
+        zip_error_t error;
+        zip_error_init_with_code(&error, err);
+        fprintf(stderr, "Cannot open zip archive '%s': %s\n",
+                targetZipFilePath, zip_error_strerror(&error));
+        zip_error_fini(&error);
+        return -1;
+    }
+
+    // ---- Add verifier file ----
+    char* filePath = JoinPath(sourceDir, checkFileName);
+    if (!filePath) {
+        zip_close(za);
+        return -1;
+    }
+
+    struct zip_source* src = zip_source_file(za, filePath, 0, ZIP_LENGTH_TO_END);
+    free(filePath);
+    if (!src) {
+        fprintf(stderr, "Cannot create source for check file '%s': %s\n",
+                checkFileName, zip_strerror(za));
+        zip_close(za);
+        return -1;
+    }
+
+    if (zip_file_add(za, checkFileName, src, ZIP_FL_ENC_UTF_8) < 0) {
+        fprintf(stderr, "Cannot add check file to zip: %s\n", zip_strerror(za));
+        zip_source_free(src); // must free manually if zip_file_add fails
+        zip_close(za);
+        return -1;
+    }
+
+    // ---- Add all .enc files ----
+    DIR* dir = opendir(sourceDir);
+    if (!dir) {
+        fprintf(stderr, "Could not open directory '%s': %s\n",
+                sourceDir, strerror(errno));
+        zip_close(za);
+        return -1;
+    }
+
+    struct dirent* de;
+    while ((de = readdir(dir)) != NULL) {
+        size_t len = strlen(de->d_name);
+        if (len < 4 || strcmp(de->d_name + len - 4, ".enc") != 0)
+            continue;
+
+        char* encPath = JoinPath(sourceDir, de->d_name);
+        if (!encPath)
+            continue;
+
+        src = zip_source_file(za, encPath, 0, ZIP_LENGTH_TO_END);
+        free(encPath);
+        if (!src) {
+            fprintf(stderr, "Cannot create source for '%s': %s\n",
+                    de->d_name, zip_strerror(za));
+            closedir(dir);
+            zip_close(za);
+            return -1;
+        }
+
+        if (zip_file_add(za, de->d_name, src, ZIP_FL_ENC_UTF_8) < 0) {
+            fprintf(stderr, "Cannot add file '%s': %s\n",
+                    de->d_name, zip_strerror(za));
+            zip_source_free(src);
+            closedir(dir);
+            zip_close(za);
+            return -1;
+        }
+    }
+
+    closedir(dir);
+
+    if (zip_close(za) < 0) {
+        fprintf(stderr, "Cannot close zip archive '%s': %s\n",
+                targetZipFilePath, zip_strerror(za));
+        return -1;
+    }
+
+    return 0;
 }
 

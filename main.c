@@ -1,6 +1,7 @@
 #define _UNICODE
 #include <windows.h>
 #include <richedit.h>
+#include <commdlg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,8 @@ BOOL isUnlocked = FALSE;
 
 HWND hNotesList, hNewNoteButton, hDeleteNoteButton;
 
+HWND hExportButton;
+
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void ShowLoginUI(HWND hwnd);
 void ShowEditorUI(HWND hwnd);
@@ -62,6 +65,8 @@ static void NotesEntry_Free(void* data)
 
 static void NotesList_FreeAll(void)
 {
+    if (!gNotes)
+        return;
     md_linked_list_free_all(gNotes, NotesEntry_Free);
     gNotes = NULL;
 }
@@ -447,6 +452,36 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             WipeWindowText(hEdit);
             EnableWindow(hEdit, FALSE);
         }
+        else if (LOWORD(wParam) == 3003) { // EXPORT
+            char* suggestedName = MakeSecureNotesZipFilename();
+
+            // Convert UTF-8 → UTF-16 for Windows dialog
+            wchar_t wSuggested[260];
+            MultiByteToWideChar(CP_UTF8, 0, suggestedName, -1, wSuggested, 260);
+            free(suggestedName);
+
+            OPENFILENAMEW ofn;
+            ZeroMemory(&ofn, sizeof(ofn));
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = hwnd;
+            ofn.lpstrFile = wSuggested;
+            ofn.nMaxFile = ARRAYSIZE(wSuggested);
+            ofn.lpstrFilter = L"Zip Files (*.zip)\0*.zip\0All Files (*.*)\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+
+            if (GetSaveFileNameW(&ofn)) {
+                // Convert chosen path back to UTF-8 for your core ExportToZip()
+                char targetPath[512];
+                WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, targetPath, sizeof(targetPath), NULL, NULL);
+
+                if (ExportToZip(".\\", targetPath, "verifier.dat") != 0)
+                {
+                     MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);
+                     return 0;
+                }
+            }
+        }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
             gTextChanged = TRUE;
 
@@ -484,8 +519,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         GetClientRect(hwnd, &rc);
         if (isUnlocked)
         {
-            MoveWindow(hEdit, 10, 10, rc.right - 20, rc.bottom - 60, TRUE);
-            MoveWindow(hLogoutButton, 10, rc.bottom - 40, 100, 28, TRUE);
+            int listWidth = 200;
+            
+            MoveWindow(hNotesList, 10, 10, listWidth - 20, rc.bottom - 80, TRUE);
+            MoveWindow(hNewNoteButton, 10, rc.bottom - 60, (listWidth - 30) / 2, 28, TRUE);
+            MoveWindow(hDeleteNoteButton, 10 + (listWidth - 30) / 2 + 10, rc.bottom - 60, (listWidth - 30) / 2, 28, TRUE);
+            MoveWindow(hNotesList, 10, 10, listWidth - 20, rc.bottom - 80, TRUE);
+            MoveWindow(hEdit, listWidth, 10, rc.right - listWidth - 20, rc.bottom - 80, TRUE);
+            MoveWindow(hExportButton, rc.right - 304, rc.bottom - 30, 140, 28, TRUE);
+            MoveWindow(hLogoutButton, rc.right - 160, rc.bottom - 30, 140, 28, TRUE);
         }
         else
         {
@@ -547,7 +589,7 @@ void ShowLoginUI(HWND hwnd)
             WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL,
             rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24,
-            hwnd, (HMENU)1000, NULL, NULL);
+            hwnd, (HMENU)1123, NULL, NULL);
     }
     else
         hPasswordEdit2 = NULL;
@@ -592,6 +634,7 @@ void ShowEditorUI(HWND hwnd)
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         10, rc.bottom - 60, (listWidth - 30) / 2, 28,
         hwnd, (HMENU)3001, NULL, NULL);
+        
 
     hDeleteNoteButton = CreateWindow(
         L"BUTTON", L"Delete",
@@ -614,6 +657,12 @@ void ShowEditorUI(HWND hwnd)
     
     EnableWindow(hEdit, FALSE);
 
+    hExportButton = CreateWindow(
+        L"BUTTON", L"Export data",
+        WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+        rc.right - 304, rc.bottom - 30, 140, 28,
+        hwnd, (HMENU)3003, NULL, NULL);
+        
     hLogoutButton = CreateWindow(
         L"BUTTON", L"Logout",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
@@ -624,6 +673,7 @@ void ShowEditorUI(HWND hwnd)
     SendMessage(hNotesList, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hNewNoteButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hDeleteNoteButton, WM_SETFONT, (WPARAM)hFont, TRUE);
+    SendMessage(hExportButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hLogoutButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     
     int count = (int)SendMessage(hNotesList, LB_GETCOUNT, 0, 0);
@@ -662,12 +712,19 @@ void DestroyEditorUI(void)
         DestroyWindow(hNewNoteButton);
         hNewNoteButton = NULL;
     }
-
+    
     if (hDeleteNoteButton && IsWindow(hDeleteNoteButton)) {
         DestroyWindow(hDeleteNoteButton);
         hDeleteNoteButton = NULL;
     }
+    
+    if (hExportButton && IsWindow(hExportButton)) {
+        DestroyWindow(hExportButton);
+        hExportButton = NULL;
+    }
 
+    NotesList_FreeAll();
+    
     // Reset globals
     gCurrentNote = NULL;
     gTextChanged = FALSE;

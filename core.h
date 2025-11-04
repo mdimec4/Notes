@@ -22,4 +22,6 @@ void Logout(void);
 char* NotesNameToFileName(const char* notesName);
 char* FileNameToNotesName(const char* fileName);
 
+char* MakeSecureNotesZipFilename(void);
+int ExportToZip(const char* sourceDir, const char* targetZipFilePath, const char* checkFileName);
 #endif // CORE_H
