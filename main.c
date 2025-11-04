@@ -35,12 +35,13 @@ static NoteEntry* gCurrentNote = NULL;
 static UINT_PTR gAutoSaveTimer = 0;
 static BOOL gTextChanged = FALSE;
 
-HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton;
+HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton, hWipeButton;
 HWND hEdit, hLogoutButton;
 HFONT hFont;
 BOOL isUnlocked = FALSE;
 
 HWND hNotesList, hNewNoteButton, hDeleteNoteButton;
+const int listWidth = 200;
 
 HWND hExportButton;
 
@@ -337,6 +338,27 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
              return 0;
         }
+        else if (LOWORD(wParam) == 1002) // Wipe storage
+        {
+            int result = MessageBoxW(
+                hwnd,                                // owner window handle
+                L"Are you sure that you want to wipr existing notes storage?",  // message text
+                L"Confirm notes storage wipe",                   // title
+                MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2  // style flags
+            );
+            if (result != IDYES)
+                return 0;
+                
+            if (WipeAndResetStorage(".\\", "verifier.dat") != 0)
+            {
+                MessageBox(hwnd, L"Failed to wipe existing data.", L"Error", MB_ICONERROR);
+                return 0;
+            }
+            DestroyLoginUI();
+            ShowLoginUI(hwnd);
+                
+            return 0;
+        }
         else if (LOWORD(wParam) == 1003) // Logout
         {
             if (gCurrentNote) {
@@ -421,7 +443,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     }
                 }
                     
-
                 gCurrentNote = n;
                 SetWindowTextW(hEdit, L"");
                 EnableWindow(hEdit, TRUE);
@@ -477,7 +498,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
                 if (ExportToZip(".\\", targetPath, "verifier.dat") != 0)
                 {
-                     MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);
+                     MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);
                      return 0;
                 }
             }
@@ -518,9 +539,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         RECT rc;
         GetClientRect(hwnd, &rc);
         if (isUnlocked)
-        {
-            int listWidth = 200;
-            
+        {         
             MoveWindow(hNotesList, 10, 10, listWidth - 20, rc.bottom - 80, TRUE);
             MoveWindow(hNewNoteButton, 10, rc.bottom - 60, (listWidth - 30) / 2, 28, TRUE);
             MoveWindow(hDeleteNoteButton, 10 + (listWidth - 30) / 2 + 10, rc.bottom - 60, (listWidth - 30) / 2, 28, TRUE);
@@ -535,6 +554,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             MoveWindow(hPasswordEdit, rc.right / 2 - 150, rc.bottom / 2 - 20, 300, 24, TRUE);
             if (hPasswordEdit2 != NULL) MoveWindow(hPasswordEdit2, rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24, TRUE);
             MoveWindow(hUnlockButton, rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28, TRUE);
+            if (hWipeButton != NULL) MoveWindow(hWipeButton, rc.right - 160, rc.bottom - 30, 140, 28, TRUE);
         }
         return 0;
     }
@@ -590,9 +610,19 @@ void ShowLoginUI(HWND hwnd)
             WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL,
             rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24,
             hwnd, (HMENU)1123, NULL, NULL);
+            
+        hWipeButton = NULL;
     }
     else
+    {
         hPasswordEdit2 = NULL;
+
+        hWipeButton = CreateWindow(
+            L"BUTTON", L"Wipe storage",
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            rc.right - 160, rc.bottom - 30, 140, 28,
+            hwnd, (HMENU)1002, NULL, NULL);
+    }
 
     hUnlockButton = CreateWindow(
         L"BUTTON", isPasswordSet ? L"Unlock" : L"Set password",
@@ -603,6 +633,7 @@ void ShowLoginUI(HWND hwnd)
     SendMessage(hPasswordLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hPasswordEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
     if (hPasswordEdit2 != NULL) SendMessage(hPasswordEdit2, WM_SETFONT, (WPARAM)hFont, TRUE);
+    if (hWipeButton != NULL) SendMessage(hWipeButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hUnlockButton, WM_SETFONT, (WPARAM)hFont, TRUE);
 }
 
@@ -611,6 +642,7 @@ void DestroyLoginUI(void)
     DestroyWindow(hPasswordLabel);
     DestroyWindow(hPasswordEdit);
     if (hPasswordEdit2 != NULL) DestroyWindow(hPasswordEdit2);
+    if (hWipeButton != NULL) DestroyWindow(hWipeButton);
     DestroyWindow(hUnlockButton);
 }
 
@@ -618,8 +650,6 @@ void ShowEditorUI(HWND hwnd)
 {
     RECT rc;
     GetClientRect(hwnd, &rc);
-
-    int listWidth = 200;
 
     // Notes list on the left
     hNotesList = CreateWindowEx(

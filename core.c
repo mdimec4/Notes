@@ -762,3 +762,52 @@ int ExportToZip(const char* sourceDir, const char* targetZipFilePath, const char
     return 0;
 }
 
+int WipeAndResetStorage(const char* sourceDir, const char* checkFileName)
+{
+    if (!sourceDir || !checkFileName)
+        return -1;
+
+    if (!IsPasswordIsSetSplitPath(sourceDir, checkFileName))
+        return -1;
+        
+    char* filePath = JoinPath(sourceDir, checkFileName);
+    if (!filePath) {
+        return -1;
+    }
+    
+    int r = remove(filePath);
+    free(filePath);
+    if (r != 0)
+        return -1;
+        
+    DIR* dir = opendir(sourceDir);
+    if (!dir) {
+        fprintf(stderr, "Could not open directory '%s': %s\n",
+                sourceDir, strerror(errno));
+        return -1;
+    }
+    
+    struct dirent* de;
+    while ((de = readdir(dir)) != NULL) {
+        size_t len = strlen(de->d_name);
+        if (len < 4 || strcmp(de->d_name + len - 4, ".enc") != 0)
+            continue;
+
+        char* encPath = JoinPath(sourceDir, de->d_name);
+        if (!encPath)
+            continue;
+
+        r = remove(encPath);
+        free(encPath);
+        if (r != 0)
+        {
+          closedir(dir); 
+          return -1;
+        }
+    }
+
+    closedir(dir);
+    
+    return 0;
+}
+
