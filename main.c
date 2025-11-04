@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <richedit.h>
 #include <commdlg.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,9 @@ struct FileEntry {
     FILETIME ftLastWrite;
 };
 
+static wchar_t gDataDirW[MAX_PATH] = {0};
+static char    gDataDirA[MAX_PATH] = {0};
+
 static md_linked_list_el* gNotes = NULL;
 static NoteEntry* gCurrentNote = NULL;
 static UINT_PTR gAutoSaveTimer = 0;
@@ -45,6 +49,7 @@ HWND hNotesList, hNewNoteButton, hDeleteNoteButton;
 const int listWidth = 200;
 
 HWND hExportButton;
+
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void ShowLoginUI(HWND hwnd);
@@ -83,7 +88,11 @@ static int CompareFileEntry(const void* a, const void* b)
 static void NotesList_LoadFromDir(HWND hNotesList)
 {
     WIN32_FIND_DATAA fd;
-    HANDLE hFind = FindFirstFileA(".\\*.enc", &fd);
+    
+    char* searchPath = JoinPath(gDataDirA, "*.enc");
+    if (!searchPath) return;
+    HANDLE hFind = FindFirstFileA(searchPath, &fd);
+    free(searchPath);
     if (hFind == INVALID_HANDLE_VALUE)
         return;
 
@@ -150,17 +159,39 @@ static void NotesList_LoadFromDir(HWND hNotesList)
     }
 }
 
+void InitStoragePath(void)
+{
+    // Get %LOCALAPPDATA%
+    if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, gDataDirW)))
+    {
+        wcscat_s(gDataDirW, MAX_PATH, L"\\SecureNotes");
+        CreateDirectoryW(gDataDirW, NULL);
+
+        // Convert UTF-16 → UTF-8 once
+        WideCharToMultiByte(CP_UTF8, 0, gDataDirW, -1, gDataDirA, sizeof(gDataDirA), NULL, NULL);
+    }
+    else
+    {
+        // fallback to current directory
+        wcscpy_s(gDataDirW, MAX_PATH, L".");
+        strcpy_s(gDataDirA, sizeof(gDataDirA), ".\\");
+    }
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     LoadLibrary(TEXT("Msftedit.dll"));
+    
+    InitStoragePath();
     if (Init() != 0)
     {
         fprintf(stderr, "Failed to init app!");
         return 1;
     }
+    
     const wchar_t CLASS_NAME[] = L"SecureNotesWindow";
 
-       WNDCLASSEX wc = {0};
+    WNDCLASSEX wc = {0};
     wc.cbSize = sizeof(WNDCLASSEX);
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
@@ -327,7 +358,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 free(password2);
             }
 
-             int success = CheckPasswordAndDeriveAesKey(password, ".\\", "verifier.dat");
+             int success = CheckPasswordAndDeriveAesKey(password, gDataDirA, "verifier.dat");
 
              // Securely wipe password buffers
              SecureZeroMemory(pwbuf, len * sizeof(wchar_t));
@@ -360,7 +391,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (result != IDYES)
                 return 0;
                 
-            if (WipeAndResetStorage(".\\", "verifier.dat") != 0)
+            if (WipeAndResetStorage(gDataDirA, "verifier.dat") != 0)
             {
                 MessageBox(hwnd, L"Failed to wipe existing data.", L"Error", MB_ICONERROR);
                 return 0;
@@ -399,7 +430,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (GetOpenFileNameW(&ofn)) {
                 char pathUtf8[MAX_PATH];
                 WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, pathUtf8, sizeof(pathUtf8), NULL, NULL);
-                if (ImportFromZip(".\\", pathUtf8) != 0)
+                if (ImportFromZip(gDataDirA, pathUtf8) != 0)
                 {
                     MessageBox(hwnd, L"Failed to emport data.", L"Error", MB_ICONERROR);MessageBox(hwnd, L"Failed to import data.", L"Error", MB_ICONERROR);
                     return 0;
@@ -487,7 +518,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 SetWindowTextW(hEdit, L"");
                 EnableWindow(hEdit, TRUE);
                 gTextChanged = FALSE;
-                EncryptAndSaveFile(".\\", gCurrentNote->fileName, "");
+                EncryptAndSaveFile(gDataDirA, gCurrentNote->fileName, "");
             }
         }
         else if (LOWORD(wParam) == 3002) { // Delete
@@ -497,9 +528,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             NoteEntry* n = (NoteEntry*)SendMessage(hNotesList, LB_GETITEMDATA, sel, 0);
             if (!n) return 0;
 
-            char path[MAX_PATH];
-            snprintf(path, MAX_PATH, ".\\%s", n->fileName);
+            char* path = JoinPath(gDataDirA, n->fileName);
+            if (!path) return 0;
             DeleteFileA(path);
+            free(path);
             
             SendMessage(hNotesList, LB_DELETESTRING, sel, 0);
 
@@ -536,7 +568,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 char targetPath[512];
                 WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, targetPath, sizeof(targetPath), NULL, NULL);
 
-                if (ExportToZip(".\\", targetPath, "verifier.dat") != 0)
+                if (ExportToZip(gDataDirA, targetPath, "verifier.dat") != 0)
                 {
                      MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);
                      return 0;
@@ -629,7 +661,7 @@ void ShowLoginUI(HWND hwnd)
     RECT rc;
     GetClientRect(hwnd, &rc);
     
-    int isPasswordSet = IsPasswordIsSetSplitPath(".\\", "verifier.dat");
+    int isPasswordSet = IsPasswordIsSetSplitPath(gDataDirA, "verifier.dat");
     
     hPasswordLabel = CreateWindow(L"static", L"ST_U",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
@@ -818,7 +850,7 @@ void LoadAndDecryptText(HWND hEdit)
         return;
     }
 
-    char* text = ReadFileAndDecrypt(".\\", gCurrentNote->fileName);
+    char* text = ReadFileAndDecrypt(gDataDirA, gCurrentNote->fileName);
     if (!text) {
         SetWindowTextW(hEdit, L"");
         return;
@@ -851,7 +883,7 @@ void SaveEncryptedText(HWND hEdit)
     if (!text) { free(wtext); return; }
     WideCharToMultiByte(CP_UTF8, 0, wtext, -1, text, buflen, NULL, NULL);
 
-    if (!EncryptAndSaveFile(".\\", gCurrentNote->fileName, text))
+    if (!EncryptAndSaveFile(gDataDirA, gCurrentNote->fileName, text))
         MessageBox(NULL, L"Failed to save encrypted note.", L"Error", MB_ICONERROR);
 
     SecureZeroMemory(text, buflen);

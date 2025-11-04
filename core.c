@@ -59,7 +59,7 @@ int Init(void)
 }
 
 // Utility: combine path (Windows PathCombineA). Returns newly allocated string or NULL.
-static char* JoinPath(const char* saveDirPath, const char* fileName) {
+char* JoinPath(const char* saveDirPath, const char* fileName) {
     assert(saveDirPath != NULL);
     assert(fileName != NULL);
 
