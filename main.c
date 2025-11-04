@@ -464,7 +464,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                new_el->prev = NULL;
                new_el->next = gNotes;
                new_el->data = n;
-               gNotes->prev = new_el;
+               if(gNotes)
+                   gNotes->prev = new_el;
                gNotes = new_el;
 
                 // re-populate notes list
