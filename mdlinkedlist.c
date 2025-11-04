@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "mdlinkedlist.h"
 
 md_linked_list_el* md_linked_list_add(md_linked_list_el* exist_el, void* data)
@@ -13,21 +14,29 @@ md_linked_list_el* md_linked_list_add(md_linked_list_el* exist_el, void* data)
         while(last_el->next) last_el = last_el->next;
         
         last_el->next = new_el;
+        new_el->prev = last_el;
+        return exist_el;
     }
 
     return new_el;
 }
 
 
-void md_linked_list_remove(md_linked_list_el* remove_el, void (*data_free_fn) (void* data))
+md_linked_list_el* md_linked_list_remove(md_linked_list_el* start_el, md_linked_list_el* remove_el, void (*data_free_fn)(void* data))
 {
+    if (!start_el)
+        return NULL;
     if (!remove_el)
-        return;
+        return start_el;
+        
+    md_linked_list_el* new_start_el = start_el;
+    if (start_el == remove_el)
+        new_start_el = start_el->next;
         
     md_linked_list_el* prev_el = remove_el->prev;
     md_linked_list_el* next_el = remove_el->next;
     
-    if (data_free_fn)
+    if (data_free_fn && remove_el->data)
         data_free_fn(remove_el->data);
     free(remove_el);
     
@@ -35,6 +44,8 @@ void md_linked_list_remove(md_linked_list_el* remove_el, void (*data_free_fn) (v
         prev_el->next = next_el;
     if (next_el)
         next_el->prev = prev_el;
+        
+     return new_start_el;   
 }
 
 size_t md_linked_list_count(md_linked_list_el* first_el)

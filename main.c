@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 
 #include "core.h"
+#include "mdlinkedlist.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "Comctl32.lib")
@@ -21,7 +22,6 @@
 typedef struct NoteEntry {
     wchar_t name[256];
     char* fileName;  // malloc'ed
-    struct NoteEntry* next;
 } NoteEntry;
 
 struct FileEntry {
@@ -29,7 +29,7 @@ struct FileEntry {
     FILETIME ftLastWrite;
 };
 
-static NoteEntry* gNotes = NULL;
+static md_linked_list_el* gNotes = NULL;
 static NoteEntry* gCurrentNote = NULL;
 static UINT_PTR gAutoSaveTimer = 0;
 static BOOL gTextChanged = FALSE;
@@ -49,15 +49,20 @@ void DestroyEditorUI(void);
 void LoadAndDecryptText(HWND hEdit);
 void SaveEncryptedText(HWND hEdit);
 
+static void NotesEntry_Free(void* data)
+{
+    if (!data)
+        return;
+    NoteEntry* ne = (NoteEntry*)data;
+    SecureZeroMemory(ne->fileName, strlen(ne->fileName));
+    SecureZeroMemory(ne->name, sizeof(ne->name));
+    free(ne->fileName);
+    free(data);
+}
+
 static void NotesList_FreeAll(void)
 {
-    NoteEntry* cur = gNotes;
-    while (cur) {
-        NoteEntry* next = cur->next;
-        if (cur->fileName) { SecureZeroMemory(cur->fileName, strlen(cur->fileName)); free(cur->fileName); }
-        free(cur);
-        cur = next;
-    }
+    md_linked_list_free_all(gNotes, NotesEntry_Free);
     gNotes = NULL;
 }
 
@@ -126,8 +131,8 @@ static void NotesList_LoadFromDir(HWND hNotesList)
 
         wcscpy_s(n->name, 256, wname);
         n->fileName = _strdup(files[i].fileName);
-        n->next = gNotes;
-        gNotes = n;
+        
+        gNotes = md_linked_list_add(gNotes, n);
 
         int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)n->name);
         SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)n);
@@ -367,11 +372,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 }
 
                 // Check duplicates
-                for (NoteEntry* n = gNotes; n; n = n->next)
-                    if (_wcsicmp(n->name, wNewName) == 0) {
+                for (md_linked_list_el* el = gNotes; el; el = el->next) {
+                    NoteEntry* ne = (NoteEntry*)el->data;
+                    if (_wcsicmp(ne->name, wNewName) == 0) {
                         MessageBox(hwnd, L"Note already exists.", L"Error", MB_ICONERROR);
                         return 0;
                     }
+                }
 
                 char noteNameUtf8[256];
                 WideCharToMultiByte(CP_UTF8, 0, wNewName, -1, noteNameUtf8, sizeof(noteNameUtf8), NULL, NULL);
@@ -385,12 +392,30 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 NoteEntry* n = calloc(1, sizeof(NoteEntry));
                 wcscpy_s(n->name, 256, wNewName);
                 n->fileName = fileName;
-                n->next = gNotes;
-                gNotes = n;
+               
+               // prepend to linked list
+               md_linked_list_el* new_el = calloc(1, sizeof(md_linked_list_el));
+               new_el->prev = NULL;
+               new_el->next = gNotes;
+               new_el->data = n;
+               gNotes->prev = new_el;
+               gNotes = new_el;
 
-                int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)n->name);
-                SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)n);
-                SendMessageW(hNotesList, LB_SETCURSEL, idx, 0);
+                // re-populate notes list
+                SendMessageW(hNotesList, LB_RESETCONTENT, 0, 0);
+                BOOL isNewElement = TRUE;
+                for(md_linked_list_el* el = gNotes; el; el = el->next){
+                    NoteEntry* ne = (NoteEntry*)el->data;
+                    
+                    int idx = (int)SendMessageW(hNotesList, LB_ADDSTRING, 0, (LPARAM)ne->name);
+                    SendMessageW(hNotesList, LB_SETITEMDATA, idx, (LPARAM)ne);
+                    if (isNewElement)
+                    {
+                        SendMessageW(hNotesList, LB_SETCURSEL, idx, 0);
+                        isNewElement = FALSE;
+                    }
+                }
+                    
 
                 gCurrentNote = n;
                 SetWindowTextW(hEdit, L"");
@@ -413,14 +438,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             SendMessage(hNotesList, LB_DELETESTRING, sel, 0);
 
             // Remove from linked list
-            NoteEntry** prev = &gNotes;
-            while (*prev && *prev != n)
-                prev = &(*prev)->next;
-            if (*prev) *prev = n->next;
-
-            SecureZeroMemory(n->fileName, strlen(n->fileName));
-            free(n->fileName);
-            free(n);
+            md_linked_list_el* remove_el = gNotes;
+            while(remove_el && remove_el->data != n) remove_el = remove_el-> next;
+            if (remove_el)
+                gNotes = md_linked_list_remove(gNotes, remove_el, NotesEntry_Free);
 
             gCurrentNote = NULL;
             WipeWindowText(hEdit);
