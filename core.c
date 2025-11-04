@@ -5,7 +5,9 @@
 #include <stdint.h>
 #include <assert.h>
 #include <time.h>
-#include <zip.h>
+#include <dirent.h>
+#include <direct.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -14,14 +16,14 @@
 #include <io.h>
 #define F_OK 0
 #define access _access
+#define mkdir _mkdir
 #else
 #include <arpa/inet.h> // for htonl/ntohl on non-windows (if ever)
 #endif
 
 #include <sys/stat.h>
 #include <sodium.h> // libsodium
-#include <dirent.h>
-
+#include <zip.h>
 
 #include "aes.h"
 
@@ -668,6 +670,85 @@ char* MakeSecureNotesZipFilename(void)
 
     memcpy(out, buf, (size_t)n + 1);
     return out;
+}
+
+int ImportFromZip(const char* targetDir, const char* sourceZipFilePath)
+{
+    if (!targetDir || !sourceZipFilePath)
+        return -1;
+
+    // Try to open zip for reading
+    int err = 0;
+    zip_t* za = zip_open(sourceZipFilePath, ZIP_RDONLY, &err);
+    if (!za) {
+        zip_error_t error;
+        zip_error_init_with_code(&error, err);
+        fprintf(stderr, "Cannot open zip archive '%s': %s\n",
+                sourceZipFilePath, zip_error_strerror(&error));
+        zip_error_fini(&error);
+        return -1;
+    }
+
+    // Create output directory if it doesn’t exist
+    mkdir(targetDir);
+
+    zip_int64_t num_entries = zip_get_num_entries(za, 0);
+    for (zip_uint64_t i = 0; i < (zip_uint64_t)num_entries; i++) {
+        const char* name = zip_get_name(za, i, 0);
+        if (!name) {
+            fprintf(stderr, "Cannot get name for entry #%llu: %s\n",
+                    (unsigned long long)i, zip_strerror(za));
+            continue;
+        }
+
+        // Skip directories (entries ending with '/')
+        size_t nlen = strlen(name);
+        if (nlen == 0 || name[nlen - 1] == '/')
+            continue;
+
+        // Read file contents from zip
+        zip_file_t* zf = zip_fopen_index(za, i, 0);
+        if (!zf) {
+            fprintf(stderr, "Cannot open file '%s' in zip: %s\n",
+                    name, zip_strerror(za));
+            continue;
+        }
+
+        // Prepare output path
+        char* outPath = JoinPath(targetDir, name);
+        if (!outPath) {
+            zip_fclose(zf);
+            continue;
+        }
+
+        FILE* f = fopen(outPath, "wb");
+        if (!f) {
+            fprintf(stderr, "Cannot create output file '%s': %s\n",
+                    outPath, strerror(errno));
+            free(outPath);
+            zip_fclose(zf);
+            continue;
+        }
+
+        // Copy contents
+        char buf[8192];
+        zip_int64_t bytes_read;
+        while ((bytes_read = zip_fread(zf, buf, sizeof(buf))) > 0) {
+            fwrite(buf, 1, (size_t)bytes_read, f);
+        }
+
+        fclose(f);
+        free(outPath);
+        zip_fclose(zf);
+    }
+
+    if (zip_close(za) < 0) {
+        fprintf(stderr, "Cannot close zip archive '%s': %s\n",
+                sourceZipFilePath, zip_strerror(za));
+        return -1;
+    }
+
+    return 0;
 }
 
 int ExportToZip(const char* sourceDir, const char* targetZipFilePath, const char* checkFileName)

@@ -35,7 +35,7 @@ static NoteEntry* gCurrentNote = NULL;
 static UINT_PTR gAutoSaveTimer = 0;
 static BOOL gTextChanged = FALSE;
 
-HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton, hWipeButton;
+HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton, hWipeButton, hImportButton;
 HWND hEdit, hLogoutButton;
 HFONT hFont;
 BOOL isUnlocked = FALSE;
@@ -342,7 +342,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         {
             int result = MessageBoxW(
                 hwnd,                                // owner window handle
-                L"Are you sure that you want to wipr existing notes storage?",  // message text
+                L"Are you sure that you want to wipe existing notes storage?",  // message text
                 L"Confirm notes storage wipe",                   // title
                 MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2  // style flags
             );
@@ -370,6 +370,34 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             Logout();
             isUnlocked = FALSE;
             ShowLoginUI(hwnd);
+            return 0;
+        }
+         else if (LOWORD(wParam) == 1004) // Import storage
+        {
+            OPENFILENAMEW ofn = {0};
+            wchar_t szFile[260] = L"";
+
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = hwnd;
+            ofn.lpstrFile = szFile;
+            ofn.nMaxFile = sizeof(szFile);
+            ofn.lpstrFilter = L"Zip Files (*.zip)\0*.zip\0";
+            ofn.nFilterIndex = 1;
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+            if (GetOpenFileNameW(&ofn)) {
+                char pathUtf8[MAX_PATH];
+                WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, pathUtf8, sizeof(pathUtf8), NULL, NULL);
+                if (ImportFromZip(".\\", pathUtf8) != 0)
+                {
+                    MessageBox(hwnd, L"Failed to emport data.", L"Error", MB_ICONERROR);MessageBox(hwnd, L"Failed to import data.", L"Error", MB_ICONERROR);
+                    return 0;
+                }
+                MessageBoxW(hwnd, L"Import complete!", L"Success", MB_ICONINFORMATION);
+                DestroyLoginUI();
+                ShowLoginUI(hwnd);
+            }
+
             return 0;
         }
         else if (LOWORD(wParam) == 3000 && HIWORD(wParam) == LBN_SELCHANGE) {
@@ -501,6 +529,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                      MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);
                      return 0;
                 }
+                MessageBoxW(hwnd, L"Export complete!", L"Success", MB_ICONINFORMATION);
             }
         }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
@@ -555,6 +584,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (hPasswordEdit2 != NULL) MoveWindow(hPasswordEdit2, rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24, TRUE);
             MoveWindow(hUnlockButton, rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28, TRUE);
             if (hWipeButton != NULL) MoveWindow(hWipeButton, rc.right - 160, rc.bottom - 30, 140, 28, TRUE);
+            if (hImportButton != NULL) MoveWindow(hImportButton, rc.right - 160, rc.bottom - 30, 140, 28, TRUE);
         }
         return 0;
     }
@@ -612,6 +642,11 @@ void ShowLoginUI(HWND hwnd)
             hwnd, (HMENU)1123, NULL, NULL);
             
         hWipeButton = NULL;
+        hImportButton = CreateWindow(
+            L"BUTTON", L"Import storage",
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            rc.right - 160, rc.bottom - 30, 140, 28,
+            hwnd, (HMENU)1004, NULL, NULL);
     }
     else
     {
@@ -622,6 +657,8 @@ void ShowLoginUI(HWND hwnd)
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
             rc.right - 160, rc.bottom - 30, 140, 28,
             hwnd, (HMENU)1002, NULL, NULL);
+            
+        hImportButton = NULL;
     }
 
     hUnlockButton = CreateWindow(
@@ -634,6 +671,7 @@ void ShowLoginUI(HWND hwnd)
     SendMessage(hPasswordEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
     if (hPasswordEdit2 != NULL) SendMessage(hPasswordEdit2, WM_SETFONT, (WPARAM)hFont, TRUE);
     if (hWipeButton != NULL) SendMessage(hWipeButton, WM_SETFONT, (WPARAM)hFont, TRUE);
+    if (hImportButton != NULL) SendMessage(hImportButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hUnlockButton, WM_SETFONT, (WPARAM)hFont, TRUE);
 }
 
@@ -643,6 +681,7 @@ void DestroyLoginUI(void)
     DestroyWindow(hPasswordEdit);
     if (hPasswordEdit2 != NULL) DestroyWindow(hPasswordEdit2);
     if (hWipeButton != NULL) DestroyWindow(hWipeButton);
+    if (hImportButton != NULL) DestroyWindow(hImportButton);
     DestroyWindow(hUnlockButton);
 }
 
@@ -688,7 +727,7 @@ void ShowEditorUI(HWND hwnd)
     EnableWindow(hEdit, FALSE);
 
     hExportButton = CreateWindow(
-        L"BUTTON", L"Export data",
+        L"BUTTON", L"Export storage",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         rc.right - 304, rc.bottom - 30, 140, 28,
         hwnd, (HMENU)3003, NULL, NULL);
