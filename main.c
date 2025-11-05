@@ -28,6 +28,9 @@
 #define INACTIVITY_TIMER_ID 99
 #define INACTIVITY_TIMEOUT_MS (5 * 60 * 1000) // 5 minutes
 
+#define COLOR_LOGIN_BG RGB(245, 247, 250)
+#define COLOR_EDITOR_BG RGB(250, 250, 250)
+
 // Consistent UI layout
 const int MARGIN = 20;
 const int CONTROL_SPACING = 10;
@@ -661,14 +664,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
          return (INT_PTR)GetStockObject(NULL_BRUSH);
     }
    case WM_ERASEBKGND:
-       if (!isUnlocked) {
+
            HDC hdc = (HDC)wParam;
-           RECT rc; GetClientRect(hwnd, &rc);
-           HBRUSH brush = CreateSolidBrush(RGB(245, 247, 250)); // soft gray-blue tint
-           FillRect(hdc, &rc, brush);
-           DeleteObject(brush);
-           return 1;
-       }
+           RECT rc; 
+           GetClientRect(hwnd, &rc);
+    
+            COLORREF bg = isUnlocked ? COLOR_EDITOR_BG : COLOR_LOGIN_BG;
+            HBRUSH brush = CreateSolidBrush(bg);
+            FillRect(hdc, &rc, brush);
+            DeleteObject(brush);
+            return 1; // fully handled (no white flicker)
        break;
     case WM_SIZE:
     {
@@ -678,7 +683,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         {       
             // "New Note" and "Delete Note" buttons below the list
             int buttonHalfWidth = (listWidth - 3 * CONTROL_SPACING) / 2;
-            int buttonY = rc.bottom - 2 * MARGIN;  
+            int buttonY = rc.bottom - 2 * MARGIN - BUTTON_HEIGHT;  
             
             MoveWindow(hNotesList, MARGIN, MARGIN, listWidth - MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT, TRUE);
             MoveWindow(hNewNoteButton,MARGIN, buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
@@ -843,7 +848,7 @@ void ShowEditorUI(HWND hwnd)
         
     // "New Note" and "Delete Note" buttons below the list
     int buttonHalfWidth = (listWidth - 3 * CONTROL_SPACING) / 2;
-    int buttonY = rc.bottom - 2 * MARGIN;
+    int buttonY = rc.bottom - 2 * MARGIN - BUTTON_HEIGHT;
 
     hNewNoteButton = CreateWindow(
         L"BUTTON", L"New Note",
