@@ -22,6 +22,9 @@
 #define AUTOSAVE_TIMER_ID 42
 #define AUTOSAVE_DELAY_MS 2000
 
+#define INACTIVITY_TIMER_ID 99
+#define INACTIVITY_TIMEOUT_MS (5 * 60 * 1000) // 5 minutes
+
 typedef struct NoteEntry {
     wchar_t name[256];
     char* fileName;  // malloc'ed
@@ -55,7 +58,7 @@ LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void ShowLoginUI(HWND hwnd);
 void ShowEditorUI(HWND hwnd);
 void DestroyLoginUI(void);
-void DestroyEditorUI(void);
+void DestroyEditorUI(HWND hwnd);
 void LoadAndDecryptText(HWND hEdit);
 void SaveEncryptedText(HWND hEdit);
 
@@ -183,9 +186,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     LoadLibrary(TEXT("Msftedit.dll"));
     
     InitStoragePath();
-    if (Init() != 0)
-    {
-        fprintf(stderr, "Failed to init app!");
+    if (Init() != 0) {
+        MessageBox(NULL, L"Failed to initialize Secure Notes (libsodium error).", L"Fatal Error", MB_ICONERROR);
         return 1;
     }
     
@@ -248,6 +250,32 @@ static void WipeWindowText(HWND wnd)
         }
     }
     SetWindowTextW(wnd, L"");
+}
+
+static void PerformLogout(HWND hwnd, BOOL autoLogout)
+{
+    if (gCurrentNote && gTextChanged)
+    {
+        SaveEncryptedText(hEdit);
+        gTextChanged = FALSE;
+    }
+
+    DestroyEditorUI(hwnd);
+    Logout();
+    isUnlocked = FALSE;
+    ShowLoginUI(hwnd);
+    
+    if (autoLogout)
+    {
+        SetForegroundWindow(hwnd);
+        MessageBox(hwnd, L"You have been logged out due to inactivity.", L"Session Timeout", MB_ICONINFORMATION);
+    }
+}
+
+static void ResetInactivityTimer(HWND hwnd)
+{
+    KillTimer(hwnd, INACTIVITY_TIMER_ID);
+    SetTimer(hwnd, INACTIVITY_TIMER_ID, INACTIVITY_TIMEOUT_MS, NULL);
 }
 
 INT_PTR CALLBACK NewNoteDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
@@ -372,6 +400,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                  isUnlocked = TRUE;
                  DestroyLoginUI();
                  ShowEditorUI(hwnd);
+                 ResetInactivityTimer(hwnd);
              }
              else
              {
@@ -401,17 +430,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 
             return 0;
         }
-        else if (LOWORD(wParam) == 1003) // Logout
+        else if (LOWORD(wParam) == 1003) // Manual Logout
         {
-            if (gCurrentNote) {
-                /* Save what’s in the editor, even if user didn't type */
-                SaveEncryptedText(hEdit);
-            }
-            
-            DestroyEditorUI();
-            Logout();
-            isUnlocked = FALSE;
-            ShowLoginUI(hwnd);
+            PerformLogout(hwnd, FALSE);
             return 0;
         }
          else if (LOWORD(wParam) == 1004) // Import storage
@@ -578,6 +599,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
             gTextChanged = TRUE;
+            ResetInactivityTimer(hwnd); // <--- reset timer on text change
 
             if (gAutoSaveTimer)
                 KillTimer(NULL, AUTOSAVE_TIMER_ID);  // use thread timer
@@ -600,6 +622,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 gTextChanged = FALSE;
             }
         }
+        else if (wParam == INACTIVITY_TIMER_ID)
+        {
+            KillTimer(hwnd, INACTIVITY_TIMER_ID);
+            PerformLogout(hwnd, TRUE);
+        }
+        break;
+    case WM_MOUSEMOVE:
+        if (isUnlocked) {
+            static int lastX = -1, lastY = -1;
+            int x = LOWORD(lParam), y = HIWORD(lParam);
+            if (x != lastX || y != lastY) {
+                ResetInactivityTimer(hwnd);
+                lastX = x; lastY = y;
+            }
+        }
+    break;
+    case WM_KEYDOWN:
+        if (isUnlocked)
+            ResetInactivityTimer(hwnd);
         break;
     case WM_CTLCOLORSTATIC:
     {
@@ -764,7 +805,7 @@ void ShowEditorUI(HWND hwnd)
         hwnd, (HMENU)2000, NULL, NULL);
         
     // Subscribe to EN_CHANGE notifications
-    SendMessage(hEdit, EM_SETEVENTMASK, 0, ENM_CHANGE);
+    SendMessage(hEdit, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_UPDATE);
     
     NotesList_LoadFromDir(hNotesList);
     
@@ -795,13 +836,16 @@ void ShowEditorUI(HWND hwnd)
     }
 }
 
-void DestroyEditorUI(void)
+void DestroyEditorUI(HWND hwnd)
 {
     // Stop any pending autosave timer
     if (gAutoSaveTimer) {
         KillTimer(NULL, AUTOSAVE_TIMER_ID); // or store hwnd in a global
         gAutoSaveTimer = 0;
     }
+    
+    if (IsWindow(hwnd))
+        KillTimer(hwnd, INACTIVITY_TIMER_ID);
 
     // Securely clear text before destroying the editor control
     if (hEdit && IsWindow(hEdit)) {
