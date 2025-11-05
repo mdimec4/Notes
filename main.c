@@ -17,6 +17,9 @@
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "Gdi32.lib")
 #pragma comment(lib, "Advapi32.lib")
+#pragma comment(linker,"\"/manifestdependency:type='win32' \
+  name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+  processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 #endif
 
 #define AUTOSAVE_TIMER_ID 42
@@ -24,6 +27,15 @@
 
 #define INACTIVITY_TIMER_ID 99
 #define INACTIVITY_TIMEOUT_MS (5 * 60 * 1000) // 5 minutes
+
+// Consistent UI layout
+const int MARGIN = 20;
+const int CONTROL_SPACING = 10;
+const int BUTTON_WIDTH = 160;
+const int BUTTON_HEIGHT = 30;
+
+HWND hTitleLabel;
+
 
 typedef struct NoteEntry {
     wchar_t name[256];
@@ -52,7 +64,7 @@ HWND hNotesList, hNewNoteButton, hDeleteNoteButton;
 const int listWidth = 200;
 
 HWND hExportButton;
-
+HFONT hTitleFont = NULL;
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void ShowLoginUI(HWND hwnd);
@@ -453,7 +465,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 WideCharToMultiByte(CP_UTF8, 0, ofn.lpstrFile, -1, pathUtf8, sizeof(pathUtf8), NULL, NULL);
                 if (ImportFromZip(gDataDirA, pathUtf8) != 0)
                 {
-                    MessageBox(hwnd, L"Failed to emport data.", L"Error", MB_ICONERROR);MessageBox(hwnd, L"Failed to import data.", L"Error", MB_ICONERROR);
+                    MessageBox(hwnd, L"Failed to import data.", L"Error", MB_ICONERROR);
                     return 0;
                 }
                 MessageBoxW(hwnd, L"Import complete!", L"Success", MB_ICONINFORMATION);
@@ -483,7 +495,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else if (LOWORD(wParam) == 3001) { // New Note
             wchar_t wNewName[256] = L"";
-            if (DialogBoxParamW(GetModuleHandle(NULL), MAKEINTRESOURCE(101), hwnd, NewNoteDialogProc, (LPARAM)wNewName) == IDOK) {
+            if (DialogBoxParamW(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_NEW_NOTE), hwnd, NewNoteDialogProc, (LPARAM)wNewName) == IDOK) {
                 if (wcslen(wNewName) == 0) {
                     MessageBox(hwnd, L"Note name cannot be empty.", L"Error", MB_ICONERROR);
                     return 0;
@@ -591,7 +603,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
                 if (ExportToZip(gDataDirA, targetPath, "verifier.dat") != 0)
                 {
-                     MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);
+                     MessageBox(hwnd, L"Failed to export data.", L"Error", MB_ICONERROR);
                      return 0;
                 }
                 MessageBoxW(hwnd, L"Export complete!", L"Success", MB_ICONINFORMATION);
@@ -648,28 +660,50 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
          SetBkMode(hdc, TRANSPARENT);
          return (INT_PTR)GetStockObject(NULL_BRUSH);
     }
+   case WM_ERASEBKGND:
+       if (!isUnlocked) {
+           HDC hdc = (HDC)wParam;
+           RECT rc; GetClientRect(hwnd, &rc);
+           HBRUSH brush = CreateSolidBrush(RGB(245, 247, 250)); // soft gray-blue tint
+           FillRect(hdc, &rc, brush);
+           DeleteObject(brush);
+           return 1;
+       }
+       break;
     case WM_SIZE:
     {
         RECT rc;
         GetClientRect(hwnd, &rc);
         if (isUnlocked)
-        {         
-            MoveWindow(hNotesList, 10, 10, listWidth - 20, rc.bottom - 80, TRUE);
-            MoveWindow(hNewNoteButton, 10, rc.bottom - 60, (listWidth - 30) / 2, 28, TRUE);
-            MoveWindow(hDeleteNoteButton, 10 + (listWidth - 30) / 2 + 10, rc.bottom - 60, (listWidth - 30) / 2, 28, TRUE);
-            MoveWindow(hNotesList, 10, 10, listWidth - 20, rc.bottom - 80, TRUE);
-            MoveWindow(hEdit, listWidth, 10, rc.right - listWidth - 20, rc.bottom - 80, TRUE);
-            MoveWindow(hExportButton, rc.right - 304, rc.bottom - 30, 140, 28, TRUE);
-            MoveWindow(hLogoutButton, rc.right - 160, rc.bottom - 30, 140, 28, TRUE);
+        {       
+            // "New Note" and "Delete Note" buttons below the list
+            int buttonHalfWidth = (listWidth - 3 * CONTROL_SPACING) / 2;
+            int buttonY = rc.bottom - 2 * MARGIN;  
+            
+            MoveWindow(hNotesList, MARGIN, MARGIN, listWidth - MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT, TRUE);
+            MoveWindow(hNewNoteButton,MARGIN, buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
+            MoveWindow(hDeleteNoteButton, MARGIN + buttonHalfWidth + CONTROL_SPACING, buttonY, buttonHalfWidth, BUTTON_HEIGHT,TRUE);
+            MoveWindow(hEdit, listWidth, MARGIN, rc.right - listWidth - 2 * MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT, TRUE);
+            MoveWindow(hExportButton, rc.right - 2*MARGIN - BUTTON_WIDTH*2 - CONTROL_SPACING, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
+            MoveWindow(hLogoutButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
         }
         else
         {
-            MoveWindow(hPasswordLabel, rc.right / 2 - 150, rc.bottom / 2 - 60, 300, 24, TRUE);
-            MoveWindow(hPasswordEdit, rc.right / 2 - 150, rc.bottom / 2 - 20, 300, 24, TRUE);
-            if (hPasswordEdit2 != NULL) MoveWindow(hPasswordEdit2, rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24, TRUE);
-            MoveWindow(hUnlockButton, rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28, TRUE);
-            if (hWipeButton != NULL) MoveWindow(hWipeButton, rc.right - 160, rc.bottom - 30, 140, 28, TRUE);
-            if (hImportButton != NULL) MoveWindow(hImportButton, rc.right - 160, rc.bottom - 30, 140, 28, TRUE);
+            const int centerX = rc.right / 2;
+            const int centerY = rc.bottom / 2;
+            const int editWidth = 300;
+            const int editHeight = 28;
+                
+            MoveWindow(hTitleLabel, centerX - 150, centerY - 140, 300, 40, TRUE);
+            MoveWindow(hPasswordLabel, centerX - editWidth/2, centerY - (hPasswordEdit2 != NULL ? 50 : 70), editWidth, 24, TRUE);
+            MoveWindow(hPasswordEdit, centerX - editWidth/2, centerY - (hPasswordEdit2 != NULL ? 20 : 30), editWidth, editHeight, TRUE);
+            if (hPasswordEdit2 != NULL)
+                MoveWindow(hPasswordEdit2, centerX - editWidth/2, centerY + 20, editWidth, editHeight, TRUE);
+            MoveWindow(hUnlockButton, rc.right/2 - 60, rc.bottom/2 + 50, 120, BUTTON_HEIGHT, TRUE);
+            if (hWipeButton != NULL)
+                MoveWindow(hWipeButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
+            if (hImportButton != NULL)
+                MoveWindow(hImportButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
         }
         return 0;
     }
@@ -704,17 +738,34 @@ void ShowLoginUI(HWND hwnd)
     
     int isPasswordSet = IsPasswordIsSetSplitPath(gDataDirA, "verifier.dat");
     
+    const int centerX = rc.right / 2;
+    const int centerY = rc.bottom / 2;
+    const int editWidth = 300;
+    const int editHeight = 28;
+
+    hTitleLabel = CreateWindow(L"static", L"Secure Notes",
+        WS_CHILD | WS_VISIBLE | SS_CENTER,
+        centerX - 150, centerY - 140, 300, 40,
+        hwnd, NULL, NULL, NULL);
+
+    LOGFONT titleFont;
+    GetObject(hFont, sizeof(LOGFONT), &titleFont);
+    titleFont.lfHeight = -24;
+    HFONT hTitleFont = CreateFontIndirect(&titleFont);
+    SendMessage(hTitleLabel, WM_SETFONT, (WPARAM)hTitleFont, TRUE);
+    
     hPasswordLabel = CreateWindow(L"static", L"ST_U",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        rc.right / 2 - 150, rc.bottom / 2 - 60, 300, 24,
+        centerX - editWidth/2, centerY - (isPasswordSet ? 50 : 70), editWidth, 24,
         hwnd, (HMENU)(501),
         NULL, NULL);
+    SendMessage(hPasswordLabel, WM_CTLCOLORSTATIC, 0, (LPARAM)GetStockObject(NULL_BRUSH));
     SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"New password:");
 
     hPasswordEdit = CreateWindowEx(
         WS_EX_CLIENTEDGE, L"EDIT", L"",
-        WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL,
-        rc.right / 2 - 150, rc.bottom / 2 - 20, 300, 24,
+        WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP,
+        centerX - editWidth/2, centerY - (isPasswordSet ? 20 : 30), editWidth, editHeight,
         hwnd, (HMENU)1000, NULL, NULL);
         
 
@@ -722,15 +773,15 @@ void ShowLoginUI(HWND hwnd)
     {
         hPasswordEdit2 = CreateWindowEx(
             WS_EX_CLIENTEDGE, L"EDIT", L"",
-            WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL,
-            rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24,
+            WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP,
+            centerX - editWidth/2, centerY + 20, editWidth, editHeight,
             hwnd, (HMENU)1123, NULL, NULL);
             
         hWipeButton = NULL;
         hImportButton = CreateWindow(
             L"BUTTON", L"Import storage",
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            rc.right - 160, rc.bottom - 30, 140, 28,
+            rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
             hwnd, (HMENU)1004, NULL, NULL);
     }
     else
@@ -740,7 +791,7 @@ void ShowLoginUI(HWND hwnd)
         hWipeButton = CreateWindow(
             L"BUTTON", L"Wipe storage",
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            rc.right - 160, rc.bottom - 30, 140, 28,
+            rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
             hwnd, (HMENU)1002, NULL, NULL);
             
         hImportButton = NULL;
@@ -749,7 +800,7 @@ void ShowLoginUI(HWND hwnd)
     hUnlockButton = CreateWindow(
         L"BUTTON", isPasswordSet ? L"Unlock" : L"Set password",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-        rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28,
+        rc.right/2 - 60, rc.bottom/2 + 50, 120, BUTTON_HEIGHT,
         hwnd, (HMENU)1001, NULL, NULL);
 
     SendMessage(hPasswordLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
@@ -762,12 +813,20 @@ void ShowLoginUI(HWND hwnd)
 
 void DestroyLoginUI(void)
 {
-    DestroyWindow(hPasswordLabel);
-    DestroyWindow(hPasswordEdit);
-    if (hPasswordEdit2 != NULL) DestroyWindow(hPasswordEdit2);
-    if (hWipeButton != NULL) DestroyWindow(hWipeButton);
-    if (hImportButton != NULL) DestroyWindow(hImportButton);
-    DestroyWindow(hUnlockButton);
+    if (hTitleLabel && IsWindow(hTitleLabel)) {
+        DestroyWindow(hTitleLabel);
+        if (hTitleFont) {
+            DeleteObject(hTitleFont);
+            hTitleFont = NULL;
+        }
+        hTitleLabel = NULL;
+    }
+    if (hPasswordLabel && IsWindow(hPasswordLabel)) DestroyWindow(hPasswordLabel);
+    if (hPasswordEdit && IsWindow(hPasswordEdit)) DestroyWindow(hPasswordEdit);
+    if (hPasswordEdit2 && IsWindow(hPasswordEdit2)) DestroyWindow(hPasswordEdit2);
+    if (hWipeButton && IsWindow(hWipeButton)) DestroyWindow(hWipeButton);
+    if (hImportButton && IsWindow(hImportButton)) DestroyWindow(hImportButton);
+    if (hUnlockButton && IsWindow(hUnlockButton)) DestroyWindow(hUnlockButton);
 }
 
 void ShowEditorUI(HWND hwnd)
@@ -779,21 +838,23 @@ void ShowEditorUI(HWND hwnd)
     hNotesList = CreateWindowEx(
         WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
         WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL,
-        10, 10, listWidth - 20, rc.bottom - 80,
+        MARGIN, MARGIN, listWidth - MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT,
         hwnd, (HMENU)3000, NULL, NULL);
-
+        
     // "New Note" and "Delete Note" buttons below the list
+    int buttonHalfWidth = (listWidth - 3 * CONTROL_SPACING) / 2;
+    int buttonY = rc.bottom - 2 * MARGIN;
+
     hNewNoteButton = CreateWindow(
         L"BUTTON", L"New Note",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        10, rc.bottom - 60, (listWidth - 30) / 2, 28,
+        MARGIN, buttonY, buttonHalfWidth, BUTTON_HEIGHT,
         hwnd, (HMENU)3001, NULL, NULL);
-        
 
     hDeleteNoteButton = CreateWindow(
         L"BUTTON", L"Delete",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        10 + (listWidth - 30) / 2 + 10, rc.bottom - 60, (listWidth - 30) / 2, 28,
+        MARGIN + buttonHalfWidth + CONTROL_SPACING, buttonY, buttonHalfWidth, BUTTON_HEIGHT,
         hwnd, (HMENU)3002, NULL, NULL);
 
     // Rich Edit for note text
@@ -801,7 +862,7 @@ void ShowEditorUI(HWND hwnd)
         WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, L"",
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
         ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
-        listWidth, 10, rc.right - listWidth - 20, rc.bottom - 80,
+        listWidth, MARGIN, rc.right - listWidth - 2 * MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT,
         hwnd, (HMENU)2000, NULL, NULL);
         
     // Subscribe to EN_CHANGE notifications
@@ -811,16 +872,17 @@ void ShowEditorUI(HWND hwnd)
     
     EnableWindow(hEdit, FALSE);
 
+    // Bottom-right buttons
     hExportButton = CreateWindow(
         L"BUTTON", L"Export storage",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        rc.right - 304, rc.bottom - 30, 140, 28,
+        rc.right - 2*MARGIN - BUTTON_WIDTH*2 - CONTROL_SPACING, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
         hwnd, (HMENU)3003, NULL, NULL);
-        
+
     hLogoutButton = CreateWindow(
         L"BUTTON", L"Logout",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        rc.right - 160, rc.bottom - 30, 140, 28,
+        rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
         hwnd, (HMENU)1003, NULL, NULL);
 
     SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
