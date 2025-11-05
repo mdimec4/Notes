@@ -231,7 +231,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     HWND hwnd = CreateWindowEx(
         0, CLASS_NAME, L"Secure Notes",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 700, 500,
+        CW_USEDEFAULT, CW_USEDEFAULT, 2048, 1024,
         NULL, NULL, hInstance, NULL);
 
     if (!hwnd)
