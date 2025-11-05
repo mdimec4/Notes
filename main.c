@@ -412,10 +412,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         else if (LOWORD(wParam) == 1002) // Wipe storage
         {
             int result = MessageBoxW(
-                hwnd,                                // owner window handle
-                L"Are you sure that you want to wipe existing notes storage?",  // message text
-                L"Confirm notes storage wipe",                   // title
-                MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2  // style flags
+                hwnd,
+                L"Are you sure you want to wipe your existing notes storage? All notes will be permanently lost!",
+                L"Confirm Storage Wipe",
+                MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2
             );
             if (result != IDYES)
                 return 0;
@@ -664,7 +664,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else
         {
-            MoveWindow(hPasswordLabel, rc.right / 2 - 150, rc.bottom / 2 - 60, hPasswordEdit2 == NULL ? 300 : 500, 24, TRUE);
+            MoveWindow(hPasswordLabel, rc.right / 2 - 150, rc.bottom / 2 - 60, 300, 24, TRUE);
             MoveWindow(hPasswordEdit, rc.right / 2 - 150, rc.bottom / 2 - 20, 300, 24, TRUE);
             if (hPasswordEdit2 != NULL) MoveWindow(hPasswordEdit2, rc.right / 2 - 150, rc.bottom / 2 + 20, 300, 24, TRUE);
             MoveWindow(hUnlockButton, rc.right / 2 - 60, rc.bottom / 2 + 45, 120, 28, TRUE);
@@ -706,10 +706,10 @@ void ShowLoginUI(HWND hwnd)
     
     hPasswordLabel = CreateWindow(L"static", L"ST_U",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        rc.right / 2 - 150, rc.bottom / 2 - 60, isPasswordSet ? 300 : 500, 24,
+        rc.right / 2 - 150, rc.bottom / 2 - 60, 300, 24,
         hwnd, (HMENU)(501),
         NULL, NULL);
-    SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"New password: (Use letters, numbers and special characters)");
+    SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"New password:");
 
     hPasswordEdit = CreateWindowEx(
         WS_EX_CLIENTEDGE, L"EDIT", L"",
