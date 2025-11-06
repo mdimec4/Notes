@@ -246,11 +246,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!hwnd)
         return 0;
         
-    DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
-    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
-                      &preference, sizeof(preference));
-    BOOL val = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, &val, sizeof(val));
+    // DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
+    // DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+    //                  &preference, sizeof(preference));
+    // BOOL val = TRUE;
+    // DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, &val, sizeof(val));
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
