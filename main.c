@@ -723,7 +723,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                    buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
             MoveWindow(hDeleteNoteButton,  MARGIN + buttonHalfWidth + CONTROL_SPACING,
                    buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
-            MoveWindow(hEdit, listWidth, MARGIN,
+            MoveWindow(hEdit, listWidth + 4, MARGIN,
                    rc.right - listWidth - 2 * MARGIN,
                    listHeight, TRUE);
             MoveWindow(hExportButton, rc.right - 2 * MARGIN - BUTTON_WIDTH * 2 - CONTROL_SPACING,
@@ -813,7 +813,7 @@ void ShowLoginUI(HWND hwnd)
     SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"New password:");
 
     hPasswordEdit = CreateWindowEx(
-        WS_EX_CLIENTEDGE, L"EDIT", L"",
+        0, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP,
         centerX - editWidth/2, centerY - (isPasswordSet ? 20 : 30), editWidth, editHeight,
         hwnd, (HMENU)1000, NULL, NULL);
@@ -822,7 +822,7 @@ void ShowLoginUI(HWND hwnd)
     if (!isPasswordSet)
     {
         hPasswordEdit2 = CreateWindowEx(
-            WS_EX_CLIENTEDGE, L"EDIT", L"",
+            0, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP,
             centerX - editWidth/2, centerY + 20, editWidth, editHeight,
             hwnd, (HMENU)1123, NULL, NULL);
@@ -897,11 +897,11 @@ void ShowEditorUI(HWND hwnd)
 
     // Notes list on the left
     hNotesList = CreateWindowEx(
-        WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
-        WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL,
+        0, L"LISTBOX", NULL,
+        WS_CHILD | WS_VISIBLE | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL,
         MARGIN, MARGIN, listWidth - MARGIN, listHeight,
         hwnd, (HMENU)3000, NULL, NULL);
-    SetWindowTheme(hNotesList, L"Explorer", NULL);
+    SetWindowTheme(hNotesList, L"", L"");
         
     hNewNoteButton = CreateWindow(
         L"BUTTON", L"New Note",
@@ -919,12 +919,12 @@ void ShowEditorUI(HWND hwnd)
 
     // Rich Edit for note text
     hEdit = CreateWindowEx(
-        WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, L"",
+        0, MSFTEDIT_CLASS, L"",
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
         ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
-        listWidth, MARGIN, rc.right - listWidth - 2 * MARGIN, listHeight,
+        listWidth + 4, MARGIN, rc.right - listWidth - 2 * MARGIN, listHeight,
         hwnd, (HMENU)2000, NULL, NULL);
-    SetWindowTheme(hEdit, L"Explorer", NULL);
+    SetWindowTheme(hEdit, L"", L"");
         
     // Subscribe to EN_CHANGE notifications
     SendMessage(hEdit, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_UPDATE);
