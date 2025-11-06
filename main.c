@@ -31,7 +31,7 @@
 #define AUTOSAVE_DELAY_MS 2000
 
 #define INACTIVITY_TIMER_ID 99
-#define INACTIVITY_TIMEOUT_MS (5 * 60 * 1000) // 5 minutes
+#define INACTIVITY_TIMEOUT_MS (/*5*/1 * 60 * 1000) // 5 minutes
 
 #define COLOR_LOGIN_BG RGB(245, 247, 250)
 #define COLOR_EDITOR_BG RGB(250, 250, 250)
@@ -63,13 +63,14 @@ static char    gDataDirA[MAX_PATH] = {0};
 static md_linked_list_el* gNotes = NULL;
 static NoteEntry* gCurrentNote = NULL;
 static UINT_PTR gAutoSaveTimer = 0;
-static UINT_PTR gInactivityTimer = 0;
 static BOOL gTextChanged = FALSE;
 
 HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton, hWipeButton, hImportButton;
 HWND hEdit, hLogoutButton;
 HFONT hFont;
 BOOL isUnlocked = FALSE;
+static BOOL gShowingLogoutMsg = FALSE;
+static BOOL gInLogout = FALSE;
 
 HWND hNotesList, hNewNoteButton, hDeleteNoteButton;
 const int listWidth = 200;
@@ -281,8 +282,30 @@ static void WipeWindowText(HWND wnd)
     SetWindowTextW(wnd, L"");
 }
 
+static void StartOrBumpInactivityTimer(HWND hwnd)
+{
+    // For window timers, SetTimer with same (hwnd,id) replaces existing one — no KillTimer needed.
+    SetTimer(hwnd, INACTIVITY_TIMER_ID, INACTIVITY_TIMEOUT_MS, NULL);
+}
+
+static void ResetInactivityTimer(HWND hwnd)
+{
+    StartOrBumpInactivityTimer(hwnd);
+}
+
+static void StopInactivityTimer(HWND hwnd)
+{
+    KillTimer(hwnd, INACTIVITY_TIMER_ID);
+}
+
 static void PerformLogout(HWND hwnd, BOOL autoLogout)
 {
+    
+    if (gInLogout) return;
+    gInLogout = TRUE;
+    
+    StopInactivityTimer(hwnd);
+    
     if (gCurrentNote && gTextChanged)
     {
         SaveEncryptedText(hEdit);
@@ -294,18 +317,15 @@ static void PerformLogout(HWND hwnd, BOOL autoLogout)
     isUnlocked = FALSE;
     ShowLoginUI(hwnd);
     
-    if (autoLogout)
+    if (autoLogout && !gShowingLogoutMsg)
     {
+        gShowingLogoutMsg = TRUE;
         SetForegroundWindow(hwnd);
         MessageBox(hwnd, L"You have been logged out due to inactivity.", L"Session Timeout", MB_ICONINFORMATION);
+        gShowingLogoutMsg = FALSE;
     }
-}
-
-static void ResetInactivityTimer()
-{
-    if (gInactivityTimer)
-        KillTimer(NULL, INACTIVITY_TIMER_ID);
-    gInactivityTimer = SetTimer(NULL, INACTIVITY_TIMER_ID, INACTIVITY_TIMEOUT_MS, NULL);
+    
+    gInLogout = FALSE;
 }
 
 INT_PTR CALLBACK NewNoteDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
@@ -428,7 +448,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                  isUnlocked = TRUE;
                  DestroyLoginUI();
                  ShowEditorUI(hwnd);
-                 ResetInactivityTimer();
+                 ResetInactivityTimer(hwnd);
              }
              else
              {
@@ -627,13 +647,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
             gTextChanged = TRUE;
-            ResetInactivityTimer(); // <--- reset timer on text change
+            ResetInactivityTimer(hwnd); // <--- reset timer on text change
 
             if (gAutoSaveTimer)
-                KillTimer(NULL, AUTOSAVE_TIMER_ID);  // use thread timer
+                KillTimer(hwnd, AUTOSAVE_TIMER_ID);  // use thread timer
 
             gAutoSaveTimer = SetTimer(
-                NULL,                      // NULL = thread timer (not window-specific)
+                hwnd,
                 AUTOSAVE_TIMER_ID,
                 AUTOSAVE_DELAY_MS,
                 NULL
@@ -642,9 +662,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         break;
     case WM_TIMER:
         if (wParam == AUTOSAVE_TIMER_ID) {
-            KillTimer(NULL, AUTOSAVE_TIMER_ID);  // thread timer
+            KillTimer(hwnd, AUTOSAVE_TIMER_ID);
             gAutoSaveTimer = 0;
-
             if (gTextChanged && gCurrentNote) {
                 SaveEncryptedText(hEdit);
                 gTextChanged = FALSE;
@@ -652,11 +671,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else if (wParam == INACTIVITY_TIMER_ID)
         {
-            if (gInactivityTimer)
-            {
-                KillTimer(NULL, INACTIVITY_TIMER_ID);
-                gInactivityTimer = 0;
-            }
+            StopInactivityTimer(hwnd);    // ensure it can’t re-fire
             PerformLogout(hwnd, TRUE);
         }
         break;
@@ -665,14 +680,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             static int lastX = -1, lastY = -1;
             int x = LOWORD(lParam), y = HIWORD(lParam);
             if (x != lastX || y != lastY) {
-                ResetInactivityTimer();
+                ResetInactivityTimer(hwnd);
                 lastX = x; lastY = y;
             }
         }
     break;
     case WM_KEYDOWN:
         if (isUnlocked)
-            ResetInactivityTimer();
+            ResetInactivityTimer(hwnd);
         break;
     case WM_CTLCOLORSTATIC:
     {
@@ -965,15 +980,11 @@ void DestroyEditorUI(HWND hwnd)
 {
     // Stop any pending autosave timer
     if (gAutoSaveTimer) {
-        KillTimer(NULL, AUTOSAVE_TIMER_ID); // or store hwnd in a global
+        KillTimer(hwnd, AUTOSAVE_TIMER_ID);
         gAutoSaveTimer = 0;
     }
     
-    if (gInactivityTimer)
-    {
-        KillTimer(NULL, INACTIVITY_TIMER_ID);
-        gInactivityTimer = 0;
-    }
+    StopInactivityTimer(hwnd);
 
     // Securely clear text before destroying the editor control
     if (hEdit && IsWindow(hEdit)) {
