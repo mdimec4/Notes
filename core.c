@@ -1,4 +1,4 @@
-// core.c - SecureNotes core helpers (AES file encrypt/decrypt + verifier using libsodium Argon2id)
+// core.c - SecureNotes core helpers (file encrypt/decrypt + verifier using libsodium Argon2id)
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -25,17 +25,12 @@
 #include <sodium.h> // libsodium
 #include <zip.h>
 
-#include "aes.h"
-
 #ifndef MAX_PATH
 #define MAX_PATH 260
 #endif
 
+static unsigned char xchacha_key[crypto_aead_xchacha20poly1305_ietf_KEYBYTES] = {0};; // 32-byte key
 
-// Globals used by AES routines (from your original PoC)
-unsigned char key[AES_KEYLEN] = {0}; // AES_KEYLEN expected to be 32
-
-struct AES_ctx encryption_ctx;
 
 // Verifier file format (vault file) - versioned
 // Layout (binary):
@@ -171,8 +166,8 @@ static int GenerateRandomBytes(unsigned char *buffer, size_t len) {
 
 static int IsKeyLoaded(void)
 {
-    static const unsigned char zero_key[AES_KEYLEN] = {0};
-    return sodium_memcmp(key, zero_key, AES_KEYLEN) != 0;
+    static const unsigned char zero_key[crypto_aead_xchacha20poly1305_ietf_KEYBYTES] = {0};
+    return sodium_memcmp(xchacha_key, zero_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES) != 0;
 }
 
 // ------------------------------------------------------
@@ -219,92 +214,122 @@ static int WriteBufferToFile(const char* path, const unsigned char* data, size_t
 // 🔹 Encryption / Decryption Helpers (IV embedded in buffer)
 // ------------------------------------------------------
 
-static unsigned char* EncryptBuffer(const unsigned char* plaintext, size_t plain_len, size_t* out_len) {
+/* =========================  EncryptBuffer  ========================= */
+
+static unsigned char* EncryptBuffer(const unsigned char* plaintext,
+                                    size_t plain_len,
+                                    size_t* out_len)
+{
     assert(plaintext && out_len);
 
     if (!IsKeyLoaded()) {
-        fprintf(stderr, "Error: AES key not loaded.\n");
+        fprintf(stderr, "Error: encryption key not loaded.\n");
         return NULL;
     }
 
-    // Add 4-byte big-endian length before plaintext
-    size_t total_len = sizeof(uint32_t) + plain_len;
-    size_t padded_len = ((total_len + AES_BLOCKLEN - 1) / AES_BLOCKLEN) * AES_BLOCKLEN;
+    /* Build payload = [4-byte big-endian length] || plaintext */
+    const size_t payload_len = sizeof(uint32_t) + plain_len;
+    unsigned char *payload = malloc(payload_len);
+    if (!payload) return NULL;
 
-    // Total buffer = IV (16 bytes) + ciphertext (padded_len)
-    size_t buf_len = AES_BLOCKLEN + padded_len;
-    unsigned char* buffer = calloc(buf_len, 1);
-    if (!buffer) return NULL;
-
-    unsigned char* iv = buffer;                  // IV is first 16 bytes
-    unsigned char* enc_data = buffer + AES_BLOCKLEN;
-
-    // Fill plaintext data with length prefix
     uint32_t be_len = htonl((uint32_t)plain_len);
-    memcpy(enc_data, &be_len, sizeof(be_len));
-    memcpy(enc_data + sizeof(be_len), plaintext, plain_len);
+    memcpy(payload, &be_len, sizeof(be_len));
+    memcpy(payload + sizeof(be_len), plaintext, plain_len);
 
-    // Generate file-specific IV
-    if (!GenerateRandomBytes(iv, AES_BLOCKLEN)) {
-        fprintf(stderr, "Failed to generate IV.\n");
-        free(buffer);
+    /* Output layout: nonce (24 bytes) || ciphertext (payload_len + 16 bytes tag) */
+    const size_t buf_cap = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES +
+                           payload_len + crypto_aead_xchacha20poly1305_ietf_ABYTES;
+
+    unsigned char *outbuf = malloc(buf_cap);
+    if (!outbuf) { free(payload); return NULL; }
+
+    unsigned char *nonce = outbuf;
+    unsigned char *cipher = outbuf + crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+
+    GenerateRandomBytes(nonce, crypto_aead_xchacha20poly1305_ietf_NPUBBYTES);
+
+    unsigned long long cipher_len = 0;
+    if (crypto_aead_xchacha20poly1305_ietf_encrypt(
+            cipher, &cipher_len,
+            payload, (unsigned long long)payload_len,
+            NULL, 0,           // no associated data
+            NULL,              // no secret nonce
+            nonce, xchacha_key) != 0)
+    {
+        free(payload);
+        free(outbuf);
         return NULL;
     }
 
-    // Encrypt the payload (everything after IV)
-    AES_init_ctx_iv(&encryption_ctx, key, iv);
-    AES_CBC_encrypt_buffer(&encryption_ctx, enc_data, padded_len);
-
-    *out_len = buf_len;
-    return buffer; // caller frees
+    free(payload);
+    *out_len = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + (size_t)cipher_len;
+    return outbuf;  // caller frees
 }
 
-static unsigned char* DecryptBuffer(const unsigned char* in_buf, size_t in_len, size_t* out_len) {
+/* =========================  DecryptBuffer  ========================= */
+
+static unsigned char* DecryptBuffer(const unsigned char* in_buf,
+                                    size_t in_len,
+                                    size_t* out_len)
+{
     assert(in_buf && out_len);
 
     if (!IsKeyLoaded()) {
-        fprintf(stderr, "Error: AES key not loaded.\n");
+        fprintf(stderr, "Error: encryption key not loaded.\n");
         return NULL;
     }
 
-    if (in_len < AES_BLOCKLEN || ((in_len - AES_BLOCKLEN) % AES_BLOCKLEN) != 0) {
+    const size_t nonce_len = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+    const size_t min_len   = nonce_len + crypto_aead_xchacha20poly1305_ietf_ABYTES;
+    if (in_len < min_len) {
         fprintf(stderr, "Invalid encrypted buffer size.\n");
         return NULL;
     }
 
-    const unsigned char* iv = in_buf;
-    const unsigned char* enc_data = in_buf + AES_BLOCKLEN;
-    size_t enc_len = in_len - AES_BLOCKLEN;
+    const unsigned char *nonce  = in_buf;
+    const unsigned char *cipher = in_buf + nonce_len;
+    const size_t cipher_len     = in_len - nonce_len;
 
-    unsigned char* tmp = malloc(enc_len);
-    if (!tmp) return NULL;
-    memcpy(tmp, enc_data, enc_len);
+    unsigned char *payload = malloc(cipher_len);
+    if (!payload) return NULL;
 
-    AES_init_ctx_iv(&encryption_ctx, key, iv);
-    AES_CBC_decrypt_buffer(&encryption_ctx, tmp, enc_len);
+    unsigned long long payload_len = 0;
+    if (crypto_aead_xchacha20poly1305_ietf_decrypt(
+            payload, &payload_len,
+            NULL,                   // no secret nonce
+            cipher, (unsigned long long)cipher_len,
+            NULL, 0,                // no associated data
+            nonce, xchacha_key) != 0)
+    {
+        free(payload);
+        fprintf(stderr, "Authentication failed (corrupted or tampered data).\n");
+        return NULL;
+    }
 
-    // Read original plaintext length
-    uint32_t be_len;
-    memcpy(&be_len, tmp, sizeof(be_len));
+    if (payload_len < sizeof(uint32_t)) {
+        free(payload);
+        fprintf(stderr, "Corrupted data (too short).\n");
+        return NULL;
+    }
+
+    uint32_t be_len = 0;
+    memcpy(&be_len, payload, sizeof(be_len));
     uint32_t plain_len = ntohl(be_len);
-    
-    if (plain_len > enc_len - sizeof(be_len)) {
-        fprintf(stderr, "Corrupted data (length mismatch)\n");
-        free(tmp);
+
+    if (plain_len != payload_len - sizeof(uint32_t)) {
+        free(payload);
+        fprintf(stderr, "Corrupted data (length mismatch).\n");
         return NULL;
     }
 
-    unsigned char* plain = calloc(plain_len + 1, 1);
-    if (!plain) {
-        free(tmp);
-        return NULL;
-    }
+    unsigned char *plain = calloc(plain_len + 1, 1);  // +1 for NUL
+    if (!plain) { free(payload); return NULL; }
 
-    memcpy(plain, tmp + sizeof(be_len), plain_len);
+    memcpy(plain, payload + sizeof(uint32_t), plain_len);
     *out_len = plain_len;
 
-    free(tmp);
-    return plain; // caller frees
+    free(payload);
+    return plain;  // caller frees
 }
 
 // ------------------------------------------------------
@@ -315,7 +340,7 @@ char* ReadFileAndDecrypt(const char* dir, const char* name) {
     assert(dir && name);
 
     if (!IsKeyLoaded()) {
-        fprintf(stderr, "Error: AES key not loaded.\n");
+        fprintf(stderr, "Error: key not loaded.\n");
         return NULL;
     }
 
@@ -344,7 +369,7 @@ int EncryptAndSaveFile(const char* dir, const char* name, const char* text)
     assert(dir && name && text);
 
     if (!IsKeyLoaded()) {
-        fprintf(stderr, "Error: AES key not loaded.\n");
+        fprintf(stderr, "Error: key not loaded.\n");
         return 0;
     }
 
@@ -401,8 +426,8 @@ static int CreateVerifierFileAndSetKey(const char* checkFilePath, const char* pa
     unsigned char salt[SALT_LEN_DEFAULT];
     randombytes_buf(salt, SALT_LEN_DEFAULT);
 
-    unsigned char derived_key[AES_KEYLEN];
-    if (crypto_pwhash(derived_key, AES_KEYLEN,
+    unsigned char derived_key[crypto_aead_xchacha20poly1305_ietf_KEYBYTES];
+    if (crypto_pwhash(derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES,
                       password, strlen(password),
                       salt,
                       (size_t)OPSLIMIT_DEFAULT,
@@ -415,14 +440,14 @@ static int CreateVerifierFileAndSetKey(const char* checkFilePath, const char* pa
     const char *const_str = "SecureNotes v1 verifier";
     unsigned char verifier[VERIFIER_LEN];
     crypto_auth_hmacsha256_state st;
-    crypto_auth_hmacsha256_init(&st, derived_key, AES_KEYLEN);
+    crypto_auth_hmacsha256_init(&st, derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
     crypto_auth_hmacsha256_update(&st, (const unsigned char*)const_str, strlen(const_str));
     crypto_auth_hmacsha256_final(&st, verifier);
 
     // Build file buffer
     size_t buf_size = 4 + 1 + 8 + 8 + SALT_LEN_DEFAULT + VERIFIER_LEN;
     unsigned char* buf = calloc(1, buf_size);
-    if (!buf) { sodium_memzero(derived_key, AES_KEYLEN); return 1; }
+    if (!buf) { sodium_memzero(derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES); return 1; }
 
     size_t pos = 0;
     memcpy(buf + pos, VER_MAGIC, 4); pos += 4;
@@ -438,31 +463,27 @@ static int CreateVerifierFileAndSetKey(const char* checkFilePath, const char* pa
     int rc = WriteFileAll(checkFilePath, (char*)buf, pos);
 
     // set key
-    memcpy(key, derived_key, AES_KEYLEN);
+    memcpy(xchacha_key, derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
     
-    sodium_memzero(derived_key, AES_KEYLEN);
+    sodium_memzero(derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
     sodium_memzero(verifier, VERIFIER_LEN);
     free(buf);
     return rc;
 }
 
-// Securely wipes in-memory AES key and any derived secrets.
+// Securely wipes in-memory key and any derived secrets.
 // Call this when the user logs out.
 void Logout(void)
 {
-    // Overwrite the global AES key with zeros.
-    sodium_memzero(key, AES_KEYLEN);
+    // Overwrite the global key with zeros.
+    sodium_memzero(xchacha_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
 
-    // Reinitialize the AES context with zeroed key and IV to prevent accidental reuse.
-    unsigned char zero_iv[AES_BLOCKLEN] = {0};
-    AES_init_ctx_iv(&encryption_ctx, key, zero_iv);
-
-    printf("User logged out. AES key securely cleared.\n");
+    printf("User logged out. Key securely cleared.\n");
 }
 
-// Check verifier file and if ok, fill global 'key' with derived AES key and return 1.
+// Check verifier file and if ok, fill global 'key' with derived key and return 1.
 // Returns 0 on wrong password or error.
-int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath, const char* checkFileName)
+int CheckPasswordAndDeriveEncKey(const char *password, const char* checkDirPath, const char* checkFileName)
 {
     if (!password || !checkDirPath || !checkFileName) {
         Logout();
@@ -519,8 +540,8 @@ int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath,
     memcpy(stored_verifier, fileBuf + pos, VERIFIER_LEN);
 
     // Derive key from password
-    unsigned char derived_key[AES_KEYLEN];
-    if (crypto_pwhash(derived_key, AES_KEYLEN,
+    unsigned char derived_key[crypto_aead_xchacha20poly1305_ietf_KEYBYTES];
+    if (crypto_pwhash(derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES,
                       password, strlen(password),
                       salt,
                       (size_t)ops_le,
@@ -535,19 +556,19 @@ int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath,
     const char *const_str = "SecureNotes v1 verifier";
     unsigned char computed_verifier[VERIFIER_LEN];
     crypto_auth_hmacsha256_state st;
-    crypto_auth_hmacsha256_init(&st, derived_key, AES_KEYLEN);
+    crypto_auth_hmacsha256_init(&st, derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
     crypto_auth_hmacsha256_update(&st, (const unsigned char*)const_str, strlen(const_str));
     crypto_auth_hmacsha256_final(&st, computed_verifier);
 
     int ok = (sodium_memcmp(computed_verifier, stored_verifier, VERIFIER_LEN) == 0);
     if (ok) {
-        memcpy(key, derived_key, AES_KEYLEN);
+        memcpy(xchacha_key, derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
     } else {
         Logout();
     }
 
     // Cleanup
-    sodium_memzero(derived_key, AES_KEYLEN);
+    sodium_memzero(derived_key, crypto_aead_xchacha20poly1305_ietf_KEYBYTES);
     sodium_memzero(computed_verifier, VERIFIER_LEN);
     sodium_memzero(stored_verifier, VERIFIER_LEN);
     free(fileBuf);

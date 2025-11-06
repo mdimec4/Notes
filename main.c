@@ -401,7 +401,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 free(password2);
             }
 
-             int success = CheckPasswordAndDeriveAesKey(password, gDataDirA, "verifier.dat");
+             int success = CheckPasswordAndDeriveEncKey(password, gDataDirA, "verifier.dat");
 
              // Securely wipe password buffers
              SecureZeroMemory(pwbuf, len * sizeof(wchar_t));

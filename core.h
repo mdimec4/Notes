@@ -18,7 +18,7 @@ int EncryptAndSaveFile(const char* saveDirPath, const char* fileName, const char
 char* ReadFileAndDecrypt(const char* loadDirPath, const char* fileName);
 
 // User password / verifier
-int CheckPasswordAndDeriveAesKey(const char *password, const char* checkDirPath, const char* checkFileName);
+int CheckPasswordAndDeriveEncKey(const char *password, const char* checkDirPath, const char* checkFileName);
 int IsPasswordIsSetSplitPath(const char* checkDirPath, const char* checkFileName);
 int IsPasswordIsSet(const char* checkFilePath);
 

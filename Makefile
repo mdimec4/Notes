@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -std=c99 -Wall -O0 -g -municode -mwindows
 LIBS = -lws2_32 -lshlwapi -lcomctl32 -lgdi32 -ladvapi32 -lsodium -lzip
 TARGET = SecureNotes.exe
-SRC = main.c core.c aes.c mdlinkedlist.c resources.o
+SRC = main.c core.c mdlinkedlist.c resources.o
 
 all:
 	windres resources.rc -O coff -o resources.o
