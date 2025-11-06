@@ -31,7 +31,7 @@
 #define AUTOSAVE_DELAY_MS 2000
 
 #define INACTIVITY_TIMER_ID 99
-#define INACTIVITY_TIMEOUT_MS (/*5*/1 * 60 * 1000) // 5 minutes
+#define INACTIVITY_TIMEOUT_MS (5 * 60 * 1000) // 5 minutes
 
 #define COLOR_LOGIN_BG RGB(245, 247, 250)
 #define COLOR_EDITOR_BG RGB(250, 250, 250)
