@@ -262,7 +262,9 @@ static unsigned char* EncryptBuffer(const unsigned char* plaintext,
     }
 
     free(payload);
-    *out_len = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + (size_t)cipher_len;
+
+    if (out_len)
+        *out_len = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES + (size_t)cipher_len;
     return outbuf;  // caller frees
 }
 
@@ -326,7 +328,9 @@ static unsigned char* DecryptBuffer(const unsigned char* in_buf,
     if (!plain) { free(payload); return NULL; }
 
     memcpy(plain, payload + sizeof(uint32_t), plain_len);
-    *out_len = plain_len;
+
+    if (out_len)
+        *out_len = plain_len;
 
     free(payload);
     return plain;  // caller frees
