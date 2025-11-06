@@ -3,6 +3,8 @@
 #include <richedit.h>
 #include <commdlg.h>
 #include <shlobj.h>
+#include <dwmapi.h>
+#include <uxtheme.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,12 +13,15 @@
 #include "core.h"
 #include "mdlinkedlist.h"
 #include "resource.h"
+#include "modern_ui.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "Comctl32.lib")
 #pragma comment(lib, "Shlwapi.lib")
 #pragma comment(lib, "Gdi32.lib")
 #pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "dwmapi.lib")
 #pragma comment(linker,"\"/manifestdependency:type='win32' \
   name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
   processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -33,11 +38,13 @@
 
 // Consistent UI layout
 const int MARGIN = 20;
+const int SPACING = 10;
+const int BUTTON_HEIGHT = 32;
+const int BUTTON_WIDTH = 140;
 const int CONTROL_SPACING = 10;
-const int BUTTON_WIDTH = 160;
-const int BUTTON_HEIGHT = 30;
 
 HWND hTitleLabel;
+HBRUSH gBrushBackground;
 
 
 typedef struct NoteEntry {
@@ -56,6 +63,7 @@ static char    gDataDirA[MAX_PATH] = {0};
 static md_linked_list_el* gNotes = NULL;
 static NoteEntry* gCurrentNote = NULL;
 static UINT_PTR gAutoSaveTimer = 0;
+static UINT_PTR gInactivityTimer = 0;
 static BOOL gTextChanged = FALSE;
 
 HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton, hWipeButton, hImportButton;
@@ -236,6 +244,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     if (!hwnd)
         return 0;
+        
+    DWM_WINDOW_CORNER_PREFERENCE preference = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+                      &preference, sizeof(preference));
+    BOOL val = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_NCRENDERING_POLICY, &val, sizeof(val));
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
@@ -287,10 +301,11 @@ static void PerformLogout(HWND hwnd, BOOL autoLogout)
     }
 }
 
-static void ResetInactivityTimer(HWND hwnd)
+static void ResetInactivityTimer()
 {
-    KillTimer(hwnd, INACTIVITY_TIMER_ID);
-    SetTimer(hwnd, INACTIVITY_TIMER_ID, INACTIVITY_TIMEOUT_MS, NULL);
+    if (gInactivityTimer)
+        KillTimer(NULL, INACTIVITY_TIMER_ID);
+    gInactivityTimer = SetTimer(NULL, INACTIVITY_TIMER_ID, INACTIVITY_TIMEOUT_MS, NULL);
 }
 
 INT_PTR CALLBACK NewNoteDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
@@ -327,10 +342,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
     case WM_CREATE:
     {
-        LOGFONT lf = {0};
-        lf.lfHeight = -18;
-        wcscpy_s(lf.lfFaceName, LF_FACESIZE, L"Segoe UI");
-        hFont = CreateFontIndirect(&lf);
+        InitModernUI(hwnd);
+        hFont = CreateModernUIFont(16, FALSE);
 
         ShowLoginUI(hwnd);
         return 0;
@@ -415,7 +428,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                  isUnlocked = TRUE;
                  DestroyLoginUI();
                  ShowEditorUI(hwnd);
-                 ResetInactivityTimer(hwnd);
+                 ResetInactivityTimer();
              }
              else
              {
@@ -614,7 +627,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else if (HIWORD(wParam) == EN_CHANGE && (HWND)lParam == hEdit) {
             gTextChanged = TRUE;
-            ResetInactivityTimer(hwnd); // <--- reset timer on text change
+            ResetInactivityTimer(); // <--- reset timer on text change
 
             if (gAutoSaveTimer)
                 KillTimer(NULL, AUTOSAVE_TIMER_ID);  // use thread timer
@@ -639,7 +652,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else if (wParam == INACTIVITY_TIMER_ID)
         {
-            KillTimer(hwnd, INACTIVITY_TIMER_ID);
+            if (gInactivityTimer)
+            {
+                KillTimer(NULL, INACTIVITY_TIMER_ID);
+                gInactivityTimer = 0;
+            }
             PerformLogout(hwnd, TRUE);
         }
         break;
@@ -648,49 +665,71 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             static int lastX = -1, lastY = -1;
             int x = LOWORD(lParam), y = HIWORD(lParam);
             if (x != lastX || y != lastY) {
-                ResetInactivityTimer(hwnd);
+                ResetInactivityTimer();
                 lastX = x; lastY = y;
             }
         }
     break;
     case WM_KEYDOWN:
         if (isUnlocked)
-            ResetInactivityTimer(hwnd);
+            ResetInactivityTimer();
         break;
     case WM_CTLCOLORSTATIC:
     {
-         HDC hdc = (HDC)wParam;
-         SetBkMode(hdc, TRANSPARENT);
-         return (INT_PTR)GetStockObject(NULL_BRUSH);
-    }
-   case WM_ERASEBKGND:
+        static HBRUSH hBrushStatic = NULL;
+        COLORREF bg = isUnlocked ? COLOR_EDITOR_BG : COLOR_LOGIN_BG;
 
-           HDC hdc = (HDC)wParam;
-           RECT rc; 
-           GetClientRect(hwnd, &rc);
-    
-            COLORREF bg = isUnlocked ? COLOR_EDITOR_BG : COLOR_LOGIN_BG;
-            HBRUSH brush = CreateSolidBrush(bg);
-            FillRect(hdc, &rc, brush);
-            DeleteObject(brush);
-            return 1; // fully handled (no white flicker)
-       break;
+        if (hBrushStatic)
+            DeleteObject(hBrushStatic);
+        hBrushStatic = CreateSolidBrush(bg);
+
+        HDC hdc = (HDC)wParam;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(32, 32, 32));
+        return (INT_PTR)hBrushStatic;
+    }
+    case WM_CTLCOLORBTN:
+    case WM_CTLCOLORLISTBOX:
+    {
+        HDC hdc = (HDC)wParam;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(32,32,32));   // darker gray text
+        return (INT_PTR)gBrushBackground;
+    }
+    case WM_ERASEBKGND:
+        PaintModernBackground(hwnd, (HDC)wParam, FALSE, CLR_INVALID);
+        return 1;
+    case WM_DRAWITEM:
+        if (ModernUI_HandleDrawItem(lParam)) return TRUE;
+            break;
     case WM_SIZE:
     {
         RECT rc;
         GetClientRect(hwnd, &rc);
         if (isUnlocked)
         {       
-            // "New Note" and "Delete Note" buttons below the list
-            int buttonHalfWidth = (listWidth - 3 * CONTROL_SPACING) / 2;
-            int buttonY = rc.bottom - 2 * MARGIN - BUTTON_HEIGHT;  
             
-            MoveWindow(hNotesList, MARGIN, MARGIN, listWidth - MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT, TRUE);
-            MoveWindow(hNewNoteButton,MARGIN, buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
-            MoveWindow(hDeleteNoteButton, MARGIN + buttonHalfWidth + CONTROL_SPACING, buttonY, buttonHalfWidth, BUTTON_HEIGHT,TRUE);
-            MoveWindow(hEdit, listWidth, MARGIN, rc.right - listWidth - 2 * MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT, TRUE);
-            MoveWindow(hExportButton, rc.right - 2*MARGIN - BUTTON_WIDTH*2 - CONTROL_SPACING, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
-            MoveWindow(hLogoutButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
+            int buttonHalfWidth = (listWidth - 3 * CONTROL_SPACING) / 2;
+
+            // consistent vertical spacing between controls and edges
+            int buttonY = rc.bottom - MARGIN - BUTTON_HEIGHT;  
+
+            // Calculate usable height for list above buttons
+            int listHeight = buttonY - MARGIN - CONTROL_SPACING;   
+            
+            MoveWindow(hNotesList,MARGIN, MARGIN,
+                   listWidth - MARGIN, listHeight, TRUE);
+            MoveWindow(hNewNoteButton,  MARGIN,
+                   buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
+            MoveWindow(hDeleteNoteButton,  MARGIN + buttonHalfWidth + CONTROL_SPACING,
+                   buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
+            MoveWindow(hEdit, listWidth, MARGIN,
+                   rc.right - listWidth - 2 * MARGIN,
+                   listHeight, TRUE);
+            MoveWindow(hExportButton, rc.right - 2 * MARGIN - BUTTON_WIDTH * 2 - CONTROL_SPACING,
+                   buttonY, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
+            MoveWindow(hLogoutButton,  rc.right - MARGIN - BUTTON_WIDTH,
+                   buttonY, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
         }
         else
         {
@@ -726,6 +765,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             DestroyWindow(hEdit);
         }
         
+        if (gBrushBackground)
+        {
+            DeleteObject(gBrushBackground);
+            gBrushBackground = NULL;
+        }
+        
         Logout();
         DeleteObject(hFont);
         PostQuitMessage(0);
@@ -756,7 +801,7 @@ void ShowLoginUI(HWND hwnd)
     LOGFONT titleFont;
     GetObject(hFont, sizeof(LOGFONT), &titleFont);
     titleFont.lfHeight = -24;
-    HFONT hTitleFont = CreateFontIndirect(&titleFont);
+    hTitleFont = CreateFontIndirect(&titleFont);
     SendMessage(hTitleLabel, WM_SETFONT, (WPARAM)hTitleFont, TRUE);
     
     hPasswordLabel = CreateWindow(L"static", L"ST_U",
@@ -788,6 +833,7 @@ void ShowLoginUI(HWND hwnd)
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
             rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
             hwnd, (HMENU)1004, NULL, NULL);
+        ApplyModernButton(hImportButton);
     }
     else
     {
@@ -798,6 +844,7 @@ void ShowLoginUI(HWND hwnd)
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
             rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
             hwnd, (HMENU)1002, NULL, NULL);
+        ApplyModernButton(hWipeButton);
             
         hImportButton = NULL;
     }
@@ -807,6 +854,7 @@ void ShowLoginUI(HWND hwnd)
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
         rc.right/2 - 60, rc.bottom/2 + 50, 120, BUTTON_HEIGHT,
         hwnd, (HMENU)1001, NULL, NULL);
+    ApplyModernButton(hUnlockButton);
 
     SendMessage(hPasswordLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hPasswordEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
@@ -838,37 +886,45 @@ void ShowEditorUI(HWND hwnd)
 {
     RECT rc;
     GetClientRect(hwnd, &rc);
+    
+    int buttonHalfWidth = (listWidth - 3 * CONTROL_SPACING) / 2;
+
+    // consistent vertical spacing between controls and edges
+    int buttonY = rc.bottom - MARGIN - BUTTON_HEIGHT;  
+
+    // Calculate usable height for list above buttons
+    int listHeight = buttonY - MARGIN - CONTROL_SPACING;  
 
     // Notes list on the left
     hNotesList = CreateWindowEx(
         WS_EX_CLIENTEDGE, L"LISTBOX", NULL,
         WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL,
-        MARGIN, MARGIN, listWidth - MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT,
+        MARGIN, MARGIN, listWidth - MARGIN, listHeight,
         hwnd, (HMENU)3000, NULL, NULL);
+    SetWindowTheme(hNotesList, L"Explorer", NULL);
         
-    // "New Note" and "Delete Note" buttons below the list
-    int buttonHalfWidth = (listWidth - 3 * CONTROL_SPACING) / 2;
-    int buttonY = rc.bottom - 2 * MARGIN - BUTTON_HEIGHT;
-
     hNewNoteButton = CreateWindow(
         L"BUTTON", L"New Note",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         MARGIN, buttonY, buttonHalfWidth, BUTTON_HEIGHT,
         hwnd, (HMENU)3001, NULL, NULL);
+    ApplyModernButton(hNewNoteButton);
 
     hDeleteNoteButton = CreateWindow(
         L"BUTTON", L"Delete",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        MARGIN + buttonHalfWidth + CONTROL_SPACING, buttonY, buttonHalfWidth, BUTTON_HEIGHT,
+         MARGIN + buttonHalfWidth + CONTROL_SPACING, buttonY, buttonHalfWidth, BUTTON_HEIGHT,
         hwnd, (HMENU)3002, NULL, NULL);
+    ApplyModernButton(hDeleteNoteButton);
 
     // Rich Edit for note text
     hEdit = CreateWindowEx(
         WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, L"",
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
         ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
-        listWidth, MARGIN, rc.right - listWidth - 2 * MARGIN, rc.bottom - 3 * MARGIN - BUTTON_HEIGHT,
+        listWidth, MARGIN, rc.right - listWidth - 2 * MARGIN, listHeight,
         hwnd, (HMENU)2000, NULL, NULL);
+    SetWindowTheme(hEdit, L"Explorer", NULL);
         
     // Subscribe to EN_CHANGE notifications
     SendMessage(hEdit, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_UPDATE);
@@ -881,14 +937,16 @@ void ShowEditorUI(HWND hwnd)
     hExportButton = CreateWindow(
         L"BUTTON", L"Export storage",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        rc.right - 2*MARGIN - BUTTON_WIDTH*2 - CONTROL_SPACING, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
+        rc.right - 2 * MARGIN - BUTTON_WIDTH * 2 - CONTROL_SPACING, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT, 
         hwnd, (HMENU)3003, NULL, NULL);
+    ApplyModernButton(hExportButton);
 
     hLogoutButton = CreateWindow(
         L"BUTTON", L"Logout",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-        rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
+         rc.right - MARGIN - BUTTON_WIDTH, buttonY, BUTTON_WIDTH, BUTTON_HEIGHT,
         hwnd, (HMENU)1003, NULL, NULL);
+    ApplyModernButton(hLogoutButton);
 
     SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hNotesList, WM_SETFONT, (WPARAM)hFont, TRUE);
@@ -911,8 +969,11 @@ void DestroyEditorUI(HWND hwnd)
         gAutoSaveTimer = 0;
     }
     
-    if (IsWindow(hwnd))
-        KillTimer(hwnd, INACTIVITY_TIMER_ID);
+    if (gInactivityTimer)
+    {
+        KillTimer(NULL, INACTIVITY_TIMER_ID);
+        gInactivityTimer = 0;
+    }
 
     // Securely clear text before destroying the editor control
     if (hEdit && IsWindow(hEdit)) {
