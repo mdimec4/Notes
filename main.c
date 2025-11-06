@@ -738,7 +738,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                    buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
             MoveWindow(hDeleteNoteButton,  MARGIN + buttonHalfWidth + CONTROL_SPACING,
                    buttonY, buttonHalfWidth, BUTTON_HEIGHT, TRUE);
-            MoveWindow(hEdit, listWidth + 4, MARGIN,
+            MoveWindow(hEdit, listWidth + MARGIN, MARGIN,
                    rc.right - listWidth - 2 * MARGIN,
                    listHeight, TRUE);
             MoveWindow(hExportButton, rc.right - 2 * MARGIN - BUTTON_WIDTH * 2 - CONTROL_SPACING,
@@ -937,7 +937,7 @@ void ShowEditorUI(HWND hwnd)
         0, MSFTEDIT_CLASS, L"",
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL |
         ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
-        listWidth + 4, MARGIN, rc.right - listWidth - 2 * MARGIN, listHeight,
+        listWidth + MARGIN, MARGIN, rc.right - listWidth - 2 * MARGIN, listHeight,
         hwnd, (HMENU)2000, NULL, NULL);
     SetWindowTheme(hEdit, L"", L"");
         
