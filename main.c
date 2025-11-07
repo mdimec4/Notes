@@ -827,7 +827,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (hWipeButton != NULL)
                 MoveWindow(hWipeButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
             if (hImportButton != NULL)
-                MoveWindow(hImportButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,TRUE);
+                MoveWindow(hImportButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
 
         }
         RedrawWindow(hwnd, NULL, NULL,
@@ -946,7 +946,7 @@ void ShowLoginUI(HWND hwnd)
         hImportButton = CreateWindow(
             L"BUTTON", L"Import storage",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            centerX - BUTTON_WIDTH / 2, centerY, BUTTON_WIDTH, BUTTON_HEIGHT,
+            rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
             hwnd, (HMENU)1004, NULL, NULL);
         ApplyModernButton(hImportButton);
         SendMessage(hImportButton, WM_SETFONT, (WPARAM)hFont, TRUE);
