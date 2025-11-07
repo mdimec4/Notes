@@ -5,6 +5,7 @@
 #include <shlobj.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
+#include <commctrl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,7 @@
 #pragma comment(lib, "Advapi32.lib")
 #pragma comment(lib, "uxtheme.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "comctl32.lib")
 #pragma comment(linker,"\"/manifestdependency:type='win32' \
   name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
   processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -66,6 +68,7 @@ static UINT_PTR gAutoSaveTimer = 0;
 static BOOL gTextChanged = FALSE;
 
 HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton, hWipeButton, hImportButton;
+HWND hStrengthBar, hHintLabel;
 HWND hEdit, hLogoutButton;
 HFONT hFont;
 BOOL isUnlocked = FALSE;
@@ -85,6 +88,7 @@ void DestroyLoginUI(void);
 void DestroyEditorUI(HWND hwnd);
 void LoadAndDecryptText(HWND hEdit);
 void SaveEncryptedText(HWND hEdit);
+static int CalculatePasswordStrength(const char *password);
 
 static void NotesEntry_Free(void* data)
 {
@@ -362,6 +366,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
     case WM_CREATE:
     {
+        INITCOMMONCONTROLSEX icex = { sizeof(icex), ICC_PROGRESS_CLASS };
+        InitCommonControlsEx(&icex);
         InitModernUI(hwnd);
         hFont = CreateModernUIFont(16, FALSE);
 
@@ -385,11 +391,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
              
              if (hPasswordEdit2 != NULL)
              {             
-                 if (strlen(password) < 21)
-                 {
-                     MessageBox(hwnd, L"Selected password is too short. Password must be at least 21 characters long!", L"Error", MB_ICONERROR);
-                     
-                     WipeWindowText(hPasswordEdit2);
+                if (strlen(password) < 12 || 
+                    !strpbrk(password, "abcdefghijklmnopqrstuvwxyz") ||
+                    !strpbrk(password, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") ||
+                    !strpbrk(password, "0123456789") ||
+                    !strpbrk(password, "!@#$%^&*()-_=+[]{};:'\",.<>?/|\\`~")) 
+                {
+                    WipeWindowText(hPasswordEdit2);
                      
                      // Securely wipe password buffers
                      SecureZeroMemory(pwbuf, len * sizeof(wchar_t));
@@ -397,7 +405,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
                      free(pwbuf);
                      free(password);
-                     return 0;
+                     
+                    MessageBox(hwnd,
+                        L"Password must be at least 12 characters long and include upper/lowercase letters, digits, and symbols.",
+                        L"Invalid Password", MB_ICONERROR);
+                    return 0;
                 }
                 int len2 = GetWindowTextLengthW(hPasswordEdit2) + 1;
                 wchar_t* pwbuf2 = (wchar_t*)malloc(len2 * sizeof(wchar_t));
@@ -659,6 +671,34 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 NULL
             );
         }
+        else if ((HWND)lParam == hPasswordEdit && HIWORD(wParam) == EN_CHANGE)
+        {
+            int len = GetWindowTextLengthW(hPasswordEdit) + 1;
+            wchar_t* wbuf = malloc(len * sizeof(wchar_t));
+            GetWindowTextW(hPasswordEdit, wbuf, len);
+
+            int utf8len = WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, NULL, 0, NULL, NULL);
+            char* passUtf8 = malloc(utf8len);
+            WideCharToMultiByte(CP_UTF8, 0, wbuf, -1, passUtf8, utf8len, NULL, NULL);
+
+            int strength = CalculatePasswordStrength(passUtf8);
+
+            // Update visual meter
+            int progress = (strength * 100) / 7;
+            SendMessage(hStrengthBar, PBM_SETPOS, progress, 0);
+
+            // Change color dynamically
+            COLORREF color;
+            if (strength <= 2) color = RGB(255, 60, 60);     // weak (red)
+            else if (strength <= 4) color = RGB(255, 200, 0); // medium (yellow)
+            else color = RGB(0, 200, 0);                      // strong (green)
+            SendMessage(hStrengthBar, PBM_SETBARCOLOR, 0, (LPARAM)color);
+
+            SecureZeroMemory(wbuf, len * sizeof(wchar_t));
+            SecureZeroMemory(passUtf8, utf8len);
+            free(wbuf);
+            free(passUtf8);
+        }
         break;
     case WM_TIMER:
         if (wParam == AUTOSAVE_TIMER_ID) {
@@ -748,21 +788,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else
         {
+
             const int centerX = rc.right / 2;
             const int centerY = rc.bottom / 2;
             const int editWidth = 300;
             const int editHeight = 28;
+            const int spacing = 10;
                 
-            MoveWindow(hTitleLabel, centerX - 150, centerY - 140, 300, 40, TRUE);
-            MoveWindow(hPasswordLabel, centerX - editWidth/2, centerY - (hPasswordEdit2 != NULL ? 50 : 70), editWidth, 24, TRUE);
-            MoveWindow(hPasswordEdit, centerX - editWidth/2, centerY - (hPasswordEdit2 != NULL ? 20 : 30), editWidth, editHeight, TRUE);
+            MoveWindow(hTitleLabel, centerX - 150, centerY - 160, 300, 40, TRUE);
+            MoveWindow(hPasswordLabel, centerX - editWidth/2, centerY - 80, editWidth, 24, TRUE);
+            MoveWindow(hPasswordEdit, centerX - editWidth/2, centerY - 50, editWidth, editHeight, TRUE);
             if (hPasswordEdit2 != NULL)
-                MoveWindow(hPasswordEdit2, centerX - editWidth/2, centerY + 20, editWidth, editHeight, TRUE);
-            MoveWindow(hUnlockButton, rc.right/2 - 60, rc.bottom/2 + 50, 120, BUTTON_HEIGHT, TRUE);
+                MoveWindow(hPasswordEdit2, centerX - editWidth/2, centerY - 50 + editHeight + spacing, editWidth, editHeight, TRUE);
+                
+             int strengthY = centerY - 50 + editHeight * 2 + spacing * 2;
+            if  (hStrengthBar != NULL)
+            {
+                MoveWindow(hStrengthBar,  centerX - editWidth/2, strengthY, editWidth, 12, TRUE);
+            }
+            if (hHintLabel != NULL)
+                MoveWindow(hHintLabel, centerX - editWidth/2, strengthY + 16, editWidth, 90, TRUE);
+            MoveWindow(hUnlockButton, centerX - BUTTON_WIDTH / 2, hStrengthBar != NULL ? (strengthY + 16 + 70) : centerY , BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
             if (hWipeButton != NULL)
                 MoveWindow(hWipeButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
             if (hImportButton != NULL)
-                MoveWindow(hImportButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
+                MoveWindow(hImportButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,TRUE);
+
         }
         return 0;
     }
@@ -801,16 +852,17 @@ void ShowLoginUI(HWND hwnd)
     RECT rc;
     GetClientRect(hwnd, &rc);
     
-    int isPasswordSet = IsPasswordIsSetSplitPath(gDataDirA, "verifier.dat");
+    BOOL isPasswordSet = IsPasswordIsSetSplitPath(gDataDirA, "verifier.dat");
     
     const int centerX = rc.right / 2;
     const int centerY = rc.bottom / 2;
     const int editWidth = 300;
     const int editHeight = 28;
+    const int spacing = 10;
 
     hTitleLabel = CreateWindow(L"static", L"Secure Notes",
         WS_CHILD | WS_VISIBLE | SS_CENTER,
-        centerX - 150, centerY - 140, 300, 40,
+        centerX - 150, centerY - 160, 300, 40,
         hwnd, NULL, NULL, NULL);
 
     LOGFONT titleFont;
@@ -818,66 +870,98 @@ void ShowLoginUI(HWND hwnd)
     titleFont.lfHeight = -24;
     hTitleFont = CreateFontIndirect(&titleFont);
     SendMessage(hTitleLabel, WM_SETFONT, (WPARAM)hTitleFont, TRUE);
-    
-    hPasswordLabel = CreateWindow(L"static", L"ST_U",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        centerX - editWidth/2, centerY - (isPasswordSet ? 50 : 70), editWidth, 24,
-        hwnd, (HMENU)(501),
-        NULL, NULL);
-    SendMessage(hPasswordLabel, WM_CTLCOLORSTATIC, 0, (LPARAM)GetStockObject(NULL_BRUSH));
-    SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"New password:");
 
-    hPasswordEdit = CreateWindowEx(
-        0, L"EDIT", L"",
+    // password label
+    hPasswordLabel = CreateWindow(L"static", L"",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        centerX - editWidth/2, centerY - 80, editWidth, 24,
+        hwnd, (HMENU)501, NULL, NULL);
+    SetWindowText(hPasswordLabel, isPasswordSet ? L"Password:" : L"New password:");
+    SendMessage(hPasswordLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+    // first password box
+    hPasswordEdit = CreateWindowEx(0, L"EDIT", L"",
         WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP,
-        centerX - editWidth/2, centerY - (isPasswordSet ? 20 : 30), editWidth, editHeight,
+        centerX - editWidth/2, centerY - 50, editWidth, editHeight,
         hwnd, (HMENU)1000, NULL, NULL);
-        
+    SendMessage(hPasswordEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
 
     if (!isPasswordSet)
     {
-        hPasswordEdit2 = CreateWindowEx(
-            0, L"EDIT", L"",
+        // confirm password
+        hPasswordEdit2 = CreateWindowEx(0, L"EDIT", L"",
             WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL | WS_TABSTOP,
-            centerX - editWidth/2, centerY + 20, editWidth, editHeight,
+            centerX - editWidth/2, centerY - 50 + editHeight + spacing,
+            editWidth, editHeight,
             hwnd, (HMENU)1123, NULL, NULL);
-            
+        SendMessage(hPasswordEdit2, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        //
+        // Strength bar (below password fields)
+        //
+        int strengthY = centerY - 50 + editHeight * 2 + spacing * 2;
+
+        hStrengthBar = CreateWindowEx(0, PROGRESS_CLASS, NULL,
+            WS_CHILD | WS_VISIBLE,
+            centerX - editWidth/2, strengthY, editWidth, 12,
+            hwnd, (HMENU)2001, GetModuleHandle(NULL), NULL);
+        SendMessage(hStrengthBar, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+        SendMessage(hStrengthBar, PBM_SETPOS, 0, 0);
+
+        // hint label
+        hHintLabel = CreateWindowEx(0, L"STATIC",
+            L"Use at least 12 characters, including upper/lowercase, digits, and special characters.",
+            WS_CHILD | WS_VISIBLE | SS_CENTER,
+            centerX - editWidth/2, strengthY + 16, editWidth, 90,
+            hwnd, NULL, GetModuleHandle(NULL), NULL);
+        SendMessage(hHintLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        // Set password button
+        hUnlockButton = CreateWindow(
+            L"BUTTON", L"Set password",
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            centerX - BUTTON_WIDTH / 2, strengthY + 16 + 70, BUTTON_WIDTH, BUTTON_HEIGHT,
+            hwnd, (HMENU)1001, NULL, NULL);
+        ApplyModernButton(hUnlockButton);
+        SendMessage(hUnlockButton, WM_SETFONT, (WPARAM)hFont, TRUE);
+
         hWipeButton = NULL;
         hImportButton = CreateWindow(
             L"BUTTON", L"Import storage",
-            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            centerX - BUTTON_WIDTH / 2, centerY, BUTTON_WIDTH, BUTTON_HEIGHT,
             hwnd, (HMENU)1004, NULL, NULL);
         ApplyModernButton(hImportButton);
+        SendMessage(hImportButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     }
     else
     {
         hPasswordEdit2 = NULL;
+        hStrengthBar = NULL;
+        hHintLabel = NULL;
 
+        // Unlock button (centered below password)
+        hUnlockButton = CreateWindow(
+            L"BUTTON", L"Unlock",
+            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+            centerX - BUTTON_WIDTH / 2, centerY, BUTTON_WIDTH, BUTTON_HEIGHT,
+            hwnd, (HMENU)1001, NULL, NULL);
+        ApplyModernButton(hUnlockButton);
+        SendMessage(hUnlockButton, WM_SETFONT, (WPARAM)hFont, TRUE);
+
+        // Wipe storage button in bottom-right corner
         hWipeButton = CreateWindow(
             L"BUTTON", L"Wipe storage",
-            WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT,
+            BUTTON_WIDTH, BUTTON_HEIGHT,
             hwnd, (HMENU)1002, NULL, NULL);
         ApplyModernButton(hWipeButton);
-            
+        SendMessage(hWipeButton, WM_SETFONT, (WPARAM)hFont, TRUE);
         hImportButton = NULL;
     }
-
-    hUnlockButton = CreateWindow(
-        L"BUTTON", isPasswordSet ? L"Unlock" : L"Set password",
-        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-        rc.right/2 - 60, rc.bottom/2 + 50, 120, BUTTON_HEIGHT,
-        hwnd, (HMENU)1001, NULL, NULL);
-    ApplyModernButton(hUnlockButton);
-
-    SendMessage(hPasswordLabel, WM_SETFONT, (WPARAM)hFont, TRUE);
-    SendMessage(hPasswordEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
-    if (hPasswordEdit2 != NULL) SendMessage(hPasswordEdit2, WM_SETFONT, (WPARAM)hFont, TRUE);
-    if (hWipeButton != NULL) SendMessage(hWipeButton, WM_SETFONT, (WPARAM)hFont, TRUE);
-    if (hImportButton != NULL) SendMessage(hImportButton, WM_SETFONT, (WPARAM)hFont, TRUE);
-    SendMessage(hUnlockButton, WM_SETFONT, (WPARAM)hFont, TRUE);
 }
+
 
 void DestroyLoginUI(void)
 {
@@ -892,6 +976,8 @@ void DestroyLoginUI(void)
     if (hPasswordLabel && IsWindow(hPasswordLabel)) DestroyWindow(hPasswordLabel);
     if (hPasswordEdit && IsWindow(hPasswordEdit)) DestroyWindow(hPasswordEdit);
     if (hPasswordEdit2 && IsWindow(hPasswordEdit2)) DestroyWindow(hPasswordEdit2);
+    if (hStrengthBar && IsWindow(hStrengthBar)) DestroyWindow(hStrengthBar);
+    if (hHintLabel && IsWindow(hHintLabel)) DestroyWindow(hHintLabel);
     if (hWipeButton && IsWindow(hWipeButton)) DestroyWindow(hWipeButton);
     if (hImportButton && IsWindow(hImportButton)) DestroyWindow(hImportButton);
     if (hUnlockButton && IsWindow(hUnlockButton)) DestroyWindow(hUnlockButton);
@@ -1073,4 +1159,26 @@ void SaveEncryptedText(HWND hEdit)
     SecureZeroMemory(wtext, (wlen + 1) * sizeof(wchar_t));
     free(text);
     free(wtext);
+}
+
+static int CalculatePasswordStrength(const char *password) {
+    int length = strlen(password);
+    int hasLower = 0, hasUpper = 0, hasDigit = 0, hasSpecial = 0;
+    int score = 0;
+
+    for (int i = 0; i < length; i++) {
+        if (password[i] >= 'a' && password[i] <= 'z') hasLower = 1;
+        else if (password[i] >= 'A' && password[i] <= 'Z') hasUpper = 1;
+        else if (password[i] >= '0' && password[i] <= '9') hasDigit = 1;
+        else if (password[i] >= 33 && password[i] <= 126) hasSpecial = 1;
+    }
+
+    if (hasLower) score += 1;
+    if (hasUpper) score += 1;
+    if (hasDigit) score += 1;
+    if (hasSpecial) score += 1;
+    if (length >= 12) score += 2;
+    if (length >= 16) score += 1;
+
+    return score; // range 0–7
 }
