@@ -70,7 +70,7 @@ static BOOL gTextChanged = FALSE;
 HWND hPasswordLabel, hPasswordEdit, hPasswordEdit2, hUnlockButton, hWipeButton, hImportButton;
 HWND hStrengthBar, hHintLabel;
 HWND hEdit, hLogoutButton;
-HFONT hFont;
+HFONT hFont, hFontEdit;
 BOOL isUnlocked = FALSE;
 static BOOL gShowingLogoutMsg = FALSE;
 static BOOL gInLogout = FALSE;
@@ -379,7 +379,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         InitCommonControlsEx(&icex);
         InitModernUI(hwnd);
         hFont = CreateModernUIFont(16, FALSE);
-
         ShowLoginUI(hwnd);
         return 0;
     }
@@ -1012,7 +1011,9 @@ void ShowEditorUI(HWND hwnd)
     int buttonY = rc.bottom - MARGIN - BUTTON_HEIGHT;  
 
     // Calculate usable height for list above buttons
-    int listHeight = buttonY - MARGIN - CONTROL_SPACING;  
+    int listHeight = buttonY - MARGIN - CONTROL_SPACING;
+
+ 
 
     // Notes list on the left
     hNotesList = CreateWindowEx(
@@ -1044,6 +1045,12 @@ void ShowEditorUI(HWND hwnd)
         listWidth + MARGIN, MARGIN, rc.right - listWidth - 2 * MARGIN, listHeight,
         hwnd, (HMENU)2000, NULL, NULL);
     SetWindowTheme(hEdit, L"", L"");
+    
+    LOGFONT editFont;
+    GetObject(hFont, sizeof(LOGFONT), &editFont);
+    editFont.lfHeight = -20;
+    hFontEdit = CreateFontIndirect(&editFont);
+    SendMessage(hEdit, WM_SETFONT, (WPARAM)hFontEdit, TRUE);
         
     // Subscribe to EN_CHANGE notifications
     SendMessage(hEdit, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_UPDATE);
@@ -1067,7 +1074,6 @@ void ShowEditorUI(HWND hwnd)
         hwnd, (HMENU)1003, NULL, NULL);
     ApplyModernButton(hLogoutButton);
 
-    SendMessage(hEdit, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hNotesList, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hNewNoteButton, WM_SETFONT, (WPARAM)hFont, TRUE);
     SendMessage(hDeleteNoteButton, WM_SETFONT, (WPARAM)hFont, TRUE);
@@ -1095,6 +1101,11 @@ void DestroyEditorUI(HWND hwnd)
         WipeWindowText(hEdit);
         DestroyWindow(hEdit);
         hEdit = NULL;
+        if (hFontEdit)
+        {
+            DeleteObject(hFontEdit);
+            hFontEdit = NULL;
+        }
     }
 
     // Destroy all remaining editor UI elements
