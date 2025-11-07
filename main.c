@@ -359,6 +359,15 @@ INT_PTR CALLBACK NewNoteDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARA
     return FALSE;
 }
 
+// helper to move a control and clean old area
+static void MoveControl(HWND parent, HWND ctrl, int x, int y, int w, int h) {
+    if (!ctrl || !IsWindow(ctrl)) return;
+    
+    RECT old; GetWindowRect(ctrl, &old);
+    MapWindowPoints(NULL, parent, (POINT*)&old, 2); // to parent coords
+    MoveWindow(ctrl, x, y, w, h, TRUE);
+    InvalidateRect(parent, &old, TRUE); // erase where it used to be
+}
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -673,6 +682,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         else if ((HWND)lParam == hPasswordEdit && HIWORD(wParam) == EN_CHANGE)
         {
+            if (!hStrengthBar) return 0;
+            
             int len = GetWindowTextLengthW(hPasswordEdit) + 1;
             wchar_t* wbuf = malloc(len * sizeof(wchar_t));
             GetWindowTextW(hPasswordEdit, wbuf, len);
@@ -808,13 +819,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
             if (hHintLabel != NULL)
                 MoveWindow(hHintLabel, centerX - editWidth/2, strengthY + 16, editWidth, 90, TRUE);
-            MoveWindow(hUnlockButton, centerX - BUTTON_WIDTH / 2, hStrengthBar != NULL ? (strengthY + 16 + 70) : centerY , BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
+                
+            MoveControl(hwnd, hUnlockButton,
+                centerX - BUTTON_WIDTH/2,
+                (hStrengthBar ? (strengthY + 16 + 70) : (centerY + 10)),
+                BUTTON_WIDTH, BUTTON_HEIGHT);
+            
             if (hWipeButton != NULL)
                 MoveWindow(hWipeButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT, TRUE);
             if (hImportButton != NULL)
                 MoveWindow(hImportButton, rc.right - MARGIN - BUTTON_WIDTH, rc.bottom - MARGIN - BUTTON_HEIGHT, BUTTON_WIDTH, BUTTON_HEIGHT,TRUE);
 
         }
+        RedrawWindow(hwnd, NULL, NULL,
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
         return 0;
     }
 
@@ -944,7 +962,7 @@ void ShowLoginUI(HWND hwnd)
         hUnlockButton = CreateWindow(
             L"BUTTON", L"Unlock",
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-            centerX - BUTTON_WIDTH / 2, centerY, BUTTON_WIDTH, BUTTON_HEIGHT,
+            centerX - BUTTON_WIDTH / 2, centerY + 10, BUTTON_WIDTH, BUTTON_HEIGHT,
             hwnd, (HMENU)1001, NULL, NULL);
         ApplyModernButton(hUnlockButton);
         SendMessage(hUnlockButton, WM_SETFONT, (WPARAM)hFont, TRUE);
