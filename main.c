@@ -132,7 +132,7 @@ static void NotesList_LoadFromDir(HWND hNotesList)
 
     do {
         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            strncpy(files[fileCount].fileName, fd.cFileName, MAX_PATH - 1);
+            memcpy(files[fileCount].fileName, fd.cFileName, MAX_PATH - 1);
             files[fileCount].fileName[MAX_PATH - 1] = 0;
             files[fileCount].ftLastWrite = fd.ftLastWriteTime;
             fileCount++;
