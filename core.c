@@ -686,7 +686,7 @@ char* MakeSecureNotesZipFilename(void)
     randombytes_buf(&rnd, sizeof(rnd));
 
     char buf[80];
-    int n = snprintf(buf, sizeof(buf), "SecureNotes_%llu_%u.zip",
+    int n = snprintf(buf, sizeof(buf), "MySecureNote_%llu_%u.zip",
                      (unsigned long long)ts, rnd);
     if (n < 0) return NULL;
 
