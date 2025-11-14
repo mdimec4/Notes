@@ -35,13 +35,13 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "MDTools\0"
-            VALUE "FileDescription", "MySecureNote - Encrypted Note Manager\0"
+            VALUE "FileDescription", "MyEncryptedNotes - Encrypted Note Manager\0"
             VALUE "FileVersion", "1.0.0.0\0"
-            VALUE "InternalName", "MySecureNote.exe\0"
+            VALUE "InternalName", "MyEncryptedNotes.exe\0"
             VALUE "LegalCopyright", "© 2025 MDTools. All rights reserved.\0"
-            VALUE "OriginalFilename", "MySecureNote.exe\0"
-            VALUE "ProductName", "MySecureNote\0"
-            VALUE "ProductVersion", "1.0.0.0\0"
+            VALUE "OriginalFilename", "MyEncryptedNotes.exe\0"
+            VALUE "ProductName", "MyEncryptedNotes\0"
+            VALUE "ProductVersion", "1.0.2.0\0"
         END
     END
 

@@ -195,7 +195,7 @@ void InitStoragePath(void)
     // Get %LOCALAPPDATA%
     if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, gDataDirW)))
     {
-        wcscat_s(gDataDirW, MAX_PATH, L"\\EncSecureNote");
+        wcscat_s(gDataDirW, MAX_PATH, L"\\MyEncryptedNotes");
         CreateDirectoryW(gDataDirW, NULL);
 
         // Convert UTF-16 → UTF-8 once
@@ -219,7 +219,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 1;
     }
     
-    const wchar_t CLASS_NAME[] = L"EncSecureNoteWindow";
+    const wchar_t CLASS_NAME[] = L"MyEncryptedNotesWindow";
 
     WNDCLASSEX wc = {0};
     wc.cbSize = sizeof(WNDCLASSEX);
@@ -242,7 +242,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     RegisterClassEx(&wc);
 
     HWND hwnd = CreateWindowEx(
-        0, CLASS_NAME, L"EncSecureNote",
+        0, CLASS_NAME, L"MyEncryptedNotes",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 2048, 1024,
         NULL, NULL, hInstance, NULL);
@@ -877,7 +877,7 @@ void ShowLoginUI(HWND hwnd)
     const int editHeight = 28;
     const int spacing = 10;
 
-    hTitleLabel = CreateWindow(L"static", L"EncSecureNote",
+    hTitleLabel = CreateWindow(L"static", L"MyEncryptedNotes",
         WS_CHILD | WS_VISIBLE | SS_CENTER,
         centerX - 150, centerY - 160, 300, 40,
         hwnd, NULL, NULL, NULL);
