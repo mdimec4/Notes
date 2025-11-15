@@ -195,7 +195,7 @@ void InitStoragePath(void)
     // Get %LOCALAPPDATA%
     if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, gDataDirW)))
     {
-        wcscat_s(gDataDirW, MAX_PATH, L"\\MyEncryptedNotes");
+        wcscat_s(gDataDirW, MAX_PATH, L"\\MySecureNote");
         CreateDirectoryW(gDataDirW, NULL);
 
         // Convert UTF-16 → UTF-8 once
