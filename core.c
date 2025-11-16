@@ -29,7 +29,7 @@
 #define MAX_PATH 260
 #endif
 
-static unsigned char xchacha_key[crypto_aead_xchacha20poly1305_ietf_KEYBYTES] = {0};; // 32-byte key
+static unsigned char xchacha_key[crypto_aead_xchacha20poly1305_ietf_KEYBYTES] = {0}; // 32-byte key
 
 
 // Verifier file format (vault file) - versioned
